@@ -67,7 +67,13 @@ def test():
     utils.run("tempest", ["init", dir_name])
     utils.run(
         "discover-tempest-config",
-        ["--create"],
+        [
+            "--create",
+            "--flavor-min-mem",
+            "128",
+            "--image",
+            "http://download.cirros-cloud.net/0.6.3/cirros-0.6.3-x86_64-disk.img",
+        ],
         env=env,
         cwd=dir_name,
     )
