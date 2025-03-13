@@ -13,11 +13,13 @@ from regress_stack.modules import (
     mysql,
     neutron,
     nova,
+    octavia,
     rabbitmq,
 )
 from regress_stack.modules import utils as module_utils
 
 DEPENDENCIES = {keystone, mysql, rabbitmq, nova, neutron, heat, cinder, glance}
+OPTIONAL_DEPENDENCIES = {octavia}
 CONDUCTOR = "magnum-conductor"
 PACKAGES = ["magnum-api", CONDUCTOR]
 LOGS = ["/var/log/magnum/"]
