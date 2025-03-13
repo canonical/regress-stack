@@ -67,6 +67,7 @@ prepare: |
     PACKAGES+="
       barbican-tempest-plugin \
       heat-tempest-plugin \
+      octavia-tempest-plugin \
       python3-tempestconf \
       tempest"
   elif [ "${TEMPEST_SOURCE:-apt}" = snap ]; then
