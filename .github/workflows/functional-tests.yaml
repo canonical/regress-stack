@@ -20,7 +20,17 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo apt update
-        sudo apt install --yes dpkg-dev libapt-pkg-dev keystone mysql-server placement-api glance-api tempest python3-tempestconf python3-openstackclient neutron-server neutron-ovn-metadata-agent openvswitch-switch ovn-central ovn-host nova-api nova-conductor nova-scheduler nova-compute nova-spiceproxy spice-html5 rabbitmq-server ceph-mgr ceph-mon ceph-osd ceph-volume cinder-api cinder-scheduler cinder-volume heat-api heat-api-cfn heat-engine heat-tempest-plugin
+        sudo apt install --yes dpkg-dev libapt-pkg-dev \
+          keystone mysql-server placement-api glance-api \
+          tempest python3-tempestconf python3-openstackclient \
+          neutron-server neutron-ovn-metadata-agent \
+          openvswitch-switch ovn-central ovn-host nova-api \
+          nova-conductor nova-scheduler nova-compute nova-spiceproxy \
+          spice-html5 rabbitmq-server ceph-mgr ceph-mon ceph-osd \
+          ceph-volume cinder-api cinder-scheduler cinder-volume heat-api \
+          heat-api-cfn heat-engine heat-tempest-plugin octavia-api \
+          octavia-housekeeping octavia-worker python3-ovn-octavia-provider \
+          octavia-driver-agent octavia-tempest-plugin
 
     - name: Install uv
       run: sudo snap install --classic astral-uv
