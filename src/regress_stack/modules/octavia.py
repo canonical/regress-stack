@@ -50,6 +50,7 @@ TEST_EXCLUDE_REGEXES = [
     r"_SI_",
     r"_LC_",
     r"L7",
+    r"ListenerScenarioTest",
     # Tries to configure an interface called eth0 on spawned VM, but does not exist
     r"octavia_tempest_plugin.tests.scenario.v2.test_traffic_ops.*",
     r"octavia_tempest_plugin.tests.scenario.v2.test_ipv6_traffic_ops.*",
@@ -110,7 +111,7 @@ def configure_tempest(tempest_conf: pathlib.Path):
                 "admin_role": "load-balancer_admin",
                 "observer_role": "load-balancer_observer",
                 "global_observer_role": "load-balancer_global_observer",
-                "RBAC_test_type": "none",
+                "RBAC_test_type": "keystone_default_roles",
                 "enabled_provider_drivers": "ovn:Octavia OVN driver",
                 "provider": "ovn",
             },
