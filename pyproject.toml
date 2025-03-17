@@ -31,4 +31,4 @@ regress-stack = "regress_stack.__main__:main"
 include-package-data = true
 
 [tool.uv.sources]
-python-apt = { git = "https://salsa.debian.org/apt-team/python-apt.git", rev = "2.4.y" }
+python-apt = { git = "https://salsa.debian.org/apt-team/python-apt.git", rev = "3b62c25961d289ce9fe40eee3b820f7a8eaf1c5c" }
