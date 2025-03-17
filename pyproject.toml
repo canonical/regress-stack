@@ -7,7 +7,7 @@ requires-python = ">=3.8"
 dependencies = [
     "crudini>=0.9.5",
     "networkx>=2.4",
-    "pyroute2<0.8",
+    "pyroute2<0.9",
     "python-apt",
     "python-openstackclient>=7.1.4",
 ]
