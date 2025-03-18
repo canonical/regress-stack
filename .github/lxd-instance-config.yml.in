@@ -1,0 +1,44 @@
+---
+config:
+  cloud-init.user-data: |
+    #cloud-config
+    manage_etc_hosts: true
+    package_update: true
+    package_upgrade: true
+    packages:
+      - ceph-mgr
+      - ceph-mon
+      - ceph-osd
+      - ceph-volume
+      - cinder-api
+      - cinder-scheduler
+      - cinder-volume
+      - dpkg-dev
+      - glance-api
+      - heat-api
+      - heat-api-cfn
+      - heat-engine
+      - heat-tempest-plugin
+      - keystone
+      - libapt-pkg-dev
+      - mysql-server
+      - neutron-ovn-metadata-agent
+      - neutron-server
+      - nova-api
+      - nova-compute
+      - nova-conductor
+      - nova-scheduler
+      - nova-spiceproxy
+      - openvswitch-switch
+      - ovn-central
+      - ovn-host
+      - placement-api
+      - python3-all-dev
+      - python3-apt
+      - python3-networkx
+      - python3-openstackclient
+      - python3-pyroute2
+      - python3-tempestconf
+      - rabbitmq-server
+      - spice-html5
+      - tempest

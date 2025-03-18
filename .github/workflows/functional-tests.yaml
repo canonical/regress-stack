@@ -5,34 +5,126 @@ on:
 
 
 jobs:
+  metadata:
+    name: Generate matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.generate-matrix.outputs.matrix }}
+    steps:
+      - name: Generate matrix
+        id: generate-matrix
+        run: |
+          set -euxo pipefail
+          echo -n matrix= >> ${GITHUB_OUTPUT}
+          curl -s https://api.launchpad.net/devel/ubuntu/series | \
+            jq '.entries[] | select(.version >= "20.04" and
+                                    (.status == "Supported" or
+                                     .status == "Current Stable Release" or
+                                     .status == "Active Development")) |
+                .name' | jq -s | jq -cs '{"base": add}' | tee -a ${GITHUB_OUTPUT}
+          cat ${GITHUB_OUTPUT}
+
   functional-tests:
+    needs:
+      - metadata
     strategy:
       fail-fast: false
-      matrix:
-        base: [noble, jammy]
-    runs-on: [self-hosted, large, "${{ matrix.base }}", x64]
+      matrix: ${{ fromJson(needs.metadata.outputs.matrix) }}
+    runs-on: [self-hosted, linux, X64, large, noble]
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
     - name: Install dependencies
-      env:
-        DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo apt update
-        sudo apt install --yes dpkg-dev libapt-pkg-dev keystone mysql-server placement-api glance-api tempest python3-tempestconf python3-openstackclient neutron-server neutron-ovn-metadata-agent openvswitch-switch ovn-central ovn-host nova-api nova-conductor nova-scheduler nova-compute nova-spiceproxy spice-html5 rabbitmq-server ceph-mgr ceph-mon ceph-osd ceph-volume cinder-api cinder-scheduler cinder-volume heat-api heat-api-cfn heat-engine heat-tempest-plugin
+        set -euxo pipefail
+        sudo apt-get update
+        sudo apt-get install -yq snapd
+        sudo systemctl enable snapd
+        sudo systemctl restart snapd
+        sudo snap refresh --channel 5.21/stable lxd \
+            || sudo snap install --channel 5.21/stable lxd
 
-    - name: Install uv
-      run: sudo snap install --classic astral-uv
+    - name: Clear FORWARD firewall rules
+      run: |
+        set -euxo pipefail
+        # Docker can inject rules causing firewall conflicts
+        sudo iptables -P FORWARD ACCEPT  || true
+        sudo ip6tables -P FORWARD ACCEPT || true
+        sudo iptables -F FORWARD  || true
+        sudo ip6tables -F FORWARD || true
+
+    - name: Configure LXD
+      run: |
+        set -euxo pipefail
+        sudo snap set lxd daemon.group=adm
+        sudo lxd init --auto
+
+    - name: Launch instance
+      run: |
+        set -euxo pipefail
+        cp .github/lxd-instance-config.yml.in.${{ matrix.base }} \
+          .github/lxd-instance-config.yml || \
+          cp .github/lxd-instance-config.yml.in \
+            .github/lxd-instance-config.yml
+        cat .github/lxd-instance-config.yml | \
+          lxc launch ubuntu-daily:${{ matrix.base }} regress-stack \
+            --vm -c limits.cpu=6 -c limits.memory=24GiB
+        while true; do
+          sleep 5
+          lxc exec regress-stack -- cloud-init status --wait && break
+        done
+        lxc file push -r . regress-stack/root/
+
+    - name: focal post launch steps
+      if: ${{ matrix.base == 'focal' }}
+      run: |
+        # The mysql-server in focal-updates does currently not work on
+        # initial install, install -release version and upgrade into -updates
+        # instead.
+        lxc exec regress-stack -- \
+          sh -c 'apt-get -y install mysql-server=8.0.19-0ubuntu5'
+        # cloud-init on focal appears to be unable to retrieve cloud-config
+        # from LXD.  Seed it into the nocloud provider and reboot.
+        cat .github/lxd-instance-config.yml | yq -r '.config[]' | \
+          lxc exec regress-stack -- \
+            sh -c 'cat > /var/lib/cloud/seed/nocloud-net/user-data'
+        lxc exec regress-stack -- \
+          sh -c 'cloud-init clean && reboot'
+        while true; do
+          sleep 5
+          lxc exec regress-stack -- cloud-init status --wait && break
+        done
+        # The python3-pyroute2 version in focal is too old, upgrade it from
+        # UCA.
+        lxc exec regress-stack -- \
+          sh -c '
+            add-apt-repository -y cloud-archive:yoga &&
+            apt-get -y install python3-pyroute2 &&
+            rm -f /etc/apt/sources.list.d/cloudarchive-yoga.list &&
+            apt-get update'
+        # tempestconf is not available in focal, install from pip.
+        lxc exec regress-stack -- \
+          sh -c '
+            pip install --system "python-tempestconf==2.5.0" &&
+            ln -s /usr/local/bin/discover-tempest-config \
+              /usr/bin/discover-tempest-config'
+
 
     - name: Plan
       run: |
-        sudo uv run regress-stack plan
+        lxc exec regress-stack -- sh -c '
+        cd regress-stack/src &&
+        sudo python3 -m regress_stack plan'
 
     - name: Setup
       run: |
-        sudo uv run regress-stack setup
+        lxc exec regress-stack -- sh -c '
+        cd regress-stack/src &&
+        sudo python3 -m regress_stack setup'
 
     - name: Test
       run: |
-        sudo uv run regress-stack test --concurrency 4
+        lxc exec regress-stack -- sh -c '
+        cd regress-stack/src &&
+        sudo python3 -m regress_stack test --concurrency auto'

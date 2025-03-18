@@ -107,7 +107,15 @@ def system(
             os.environ.update(env)
         if cwd:
             os.chdir(cwd)
-        exit_code = os.waitstatus_to_exitcode(os.system(cmd))
+        status = os.system(cmd)
+        exit_code = -1
+        # See https://github.com/python/cpython/pull/19201 for background.
+        if os.WIFSIGNALED(status):
+            exit_code = -os.WTERMSIG(status)
+        elif os.WIFEXITED(status):
+            exit_code = os.WEXITSTATUS(status)
+        elif os.WIFSTOPPED(status):
+            exit_code = -os.WSTOPSIG(status)
     finally:
         if env:
             os.environ = saved_env

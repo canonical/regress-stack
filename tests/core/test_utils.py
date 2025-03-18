@@ -1,5 +1,6 @@
 # Copyright 2025 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
+import os
 import unittest.mock as mock
 
 import pytest
@@ -16,13 +17,27 @@ def mock_cpu_count(monkeypatch):
 
 
 @pytest.fixture
-def mock_os(monkeypatch):
-    os = mock.Mock()
+def mock_environ(monkeypatch):
+    environ = {}
 
-    os.environ = {}
+    monkeypatch.setattr("regress_stack.core.utils.os.environ", environ)
+    yield environ
 
-    monkeypatch.setattr("regress_stack.core.utils.os", os)
-    yield os
+
+@pytest.fixture
+def mock_system(monkeypatch):
+    system = mock.Mock()
+
+    monkeypatch.setattr("regress_stack.core.utils.os.system", system)
+    yield system
+
+
+@pytest.fixture
+def mock_chdir(monkeypatch):
+    chdir = mock.Mock()
+
+    monkeypatch.setattr("regress_stack.core.utils.os.chdir", chdir)
+    yield chdir
 
 
 def test_concurrency_cb(mock_cpu_count):
@@ -34,25 +49,23 @@ def test_concurrency_cb(mock_cpu_count):
         regress_stack.core.utils.concurrency_cb("NotInt")
 
 
-def test_system(mock_os):
-    mock_os.waitstatus_to_exitcode.return_value = 42
+def test_system(mock_environ, mock_system, mock_chdir):
+    mock_system.return_value = 10752
     assert regress_stack.core.utils.system("abc") == 42
-    mock_os.system.assert_called_once_with("abc")
-    mock_os.chdir.assert_not_called()
-    assert mock_os.environ == {}
-    mock_os.reset()
+    mock_system.assert_called_once_with("abc")
+    mock_chdir.assert_not_called()
+    mock_system.reset()
     regress_stack.core.utils.system("abc", {"a": "A"})
-    mock_os.system.assert_called_with("abc")
-    mock_os.chdir.assert_not_called()
-    assert "a" in mock_os.environ
-    mock_os.reset()
+    mock_system.assert_called_with("abc")
+    mock_chdir.assert_not_called()
+    assert "a" in mock_environ
+    mock_system.reset()
     regress_stack.core.utils.system("abc", {"b": "B"}, "/non-existent")
-    mock_os.system.assert_called_with("abc")
-    assert "b" in mock_os.environ
-    mock_os.chdir.assert_has_calls(
+    mock_system.assert_called_with("abc")
+    assert "b" in mock_environ
+    mock_chdir.assert_has_calls(
         [
             mock.call("/non-existent"),
-            mock.call(mock_os.getcwd()),
+            mock.call(os.getcwd()),
         ]
     )
-    mock_os.reset()
