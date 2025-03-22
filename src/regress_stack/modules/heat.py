@@ -5,12 +5,13 @@ import logging
 import pathlib
 
 from regress_stack.core import utils as core_utils
-from regress_stack.modules import keystone, mysql, neutron, nova, rabbitmq
+from regress_stack.modules import keystone, mysql, neutron, nova, octavia, rabbitmq
 from regress_stack.modules import utils as module_utils
 
 LOG = logging.getLogger(__name__)
 
 DEPENDENCIES = {keystone, mysql, rabbitmq, nova, neutron}
+OPTIONAL_DEPENDENCIES = {octavia}
 PACKAGES = ["heat-api", "heat-api-cfn", "heat-engine"]
 LOGS = ["/var/log/heat/"]
 
