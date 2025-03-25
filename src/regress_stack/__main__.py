@@ -90,6 +90,8 @@ def test(concurrency: int):
         str(tempest_conf),
         ("validation", "image_ssh_user", "ubuntu"),
         ("validation", "image_alt_ssh_user", "ubuntu"),
+        ("validation", "connect_method", "floating"),
+        ("network-feature-enabled", "port_security", "true"),
     )
 
     test_regexes = []
@@ -108,24 +110,26 @@ def test(concurrency: int):
         test_regexes.append((includes_regexes, exclude_regexes))
 
     LOG.info("Building test list")
-    regress_tests = utils.run(
-        "tempest", ["run", "--smoke", "--list"], env=env, cwd=dir_name
-    )
+    global_include_regex = ["smoke"]
+    global_exclude_regex = []
 
     for include_regexes, exclude_regexes in test_regexes:
-        regress_tests += utils.run(
-            "tempest",
-            [
-                "run",
-                "--list",
-                "--regex",
-                "|".join(include_regexes),
-                "--exclude-regex",
-                "|".join(exclude_regexes),
-            ],
-            env=env,
-            cwd=dir_name,
-        )
+        global_include_regex.append("|".join(include_regexes))
+        global_exclude_regex.append("|".join(exclude_regexes))
+
+    regress_tests = utils.run(
+        "tempest",
+        [
+            "run",
+            "--list",
+            "--regex",
+            "|".join(global_include_regex),
+            "--exclude-regex",
+            "|".join(global_exclude_regex),
+        ],
+        env=env,
+        cwd=dir_name,
+    )
 
     regress_list = pathlib.Path(dir_name) / "regress_tests.txt"
     regress_list.write_text(regress_tests)
