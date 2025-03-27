@@ -6,5 +6,9 @@ dist/
 wheels/
 *.egg-info
 
+# Spread generated files
+.spread-reuse.yaml
+spread.yaml
+
 # Virtual environments
 .venv
