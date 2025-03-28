@@ -18,8 +18,8 @@ for codename in $RELEASES; do
       - ubuntu-${codename}${proposed:+-proposed}${ppa:+-ppa}:
           image: ubuntu-daily:${codename}
           environment:
-            ENABLE_PROPOSED: ${proposed}
-            PPA: ${ppa}
+            APT_ENABLE_PROPOSED: ${proposed}
+            APT_ENABLE_PPA: ${ppa}
 EOSYSTEM
         done
     done

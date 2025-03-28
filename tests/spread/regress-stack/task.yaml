@@ -5,7 +5,7 @@ prepare: |
   if ! grep -q 127.0.1.1 /etc/hosts; then
     echo "127.0.1.1 $(hostname)" >> /etc/hosts
   fi
-  if [ -n "${ENABLE_PROPOSED:-}" ]; then
+  if [ -n "${APT_ENABLE_PROPOSED:-}" ]; then
     cat <<EOF > /etc/apt/preferences.d/proposed-updates
   Package: *
   Pin: release a=*-proposed
@@ -22,8 +22,8 @@ prepare: |
         /etc/apt/sources.list.d/ubuntu.sources
     fi
   fi
-  if [ -n "${PPA:-}" ]; then
-    add-apt-repository -y $PPA
+  if [ -n "${APT_ENABLE_PPA:-}" ]; then
+    add-apt-repository -y $APT_ENABLE_PPA
   fi
   apt-get update
   apt-get -y install \
