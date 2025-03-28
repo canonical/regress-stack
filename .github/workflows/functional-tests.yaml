@@ -33,7 +33,7 @@ jobs:
       fail-fast: false
       matrix:
         release: ${{ fromJson(needs.metadata.outputs.releases) }}
-    runs-on: [self-hosted, linux, AMD64, X64, large, jammy]
+    runs-on: [self-hosted, linux, AMD64, X64, xlarge, jammy]
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -73,8 +73,9 @@ jobs:
         set -euxo pipefail
         nproc
         free -h
-        RELEASES=${{ matrix.release }} PLAN=c2-m8 ./boot.sh
+        RELEASES=${{ matrix.release }} PLAN=c6-m16 ./boot.sh
         mkdir /tmp/artifacts
+        cp spread.yaml /tmp/artifacts/
         $HOME/go/bin/spread -reuse -artifacts /tmp/artifacts
 
     - name: Sanitize artifacts
@@ -83,7 +84,10 @@ jobs:
         set -euxo pipefail
         # The upload-artifact action does not allow colon in paths.
         for dent in /tmp/artifacts/*; do
-          mv -v $dent ${dent//:/-}
+          sanitized_dent=${dent//:/-}
+          if [ "$dent" != "$sanitized_dent" ]; then
+            mv -v $dent ${dent//:/-}
+          fi
         done
 
     - name: Artifacts
