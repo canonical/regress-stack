@@ -1,11 +1,14 @@
 summary: regress-stack
 
+environment:
+  FEATURE_ENABLE_CEPH: $(HOST:echo ${FEATURE_ENABLE_CEPH:-false})
+
 prepare: |
   set -euxo pipefail
   if ! grep -q 127.0.1.1 /etc/hosts; then
     echo "127.0.1.1 $(hostname)" >> /etc/hosts
   fi
-  if [ -n "${APT_ENABLE_PROPOSED:-}" ]; then
+  if [ "${APT_ENABLE_PROPOSED:-false}" != false ]; then
     cat <<EOF > /etc/apt/preferences.d/proposed-updates
   Package: *
   Pin: release a=*-proposed
@@ -22,14 +25,17 @@ prepare: |
         /etc/apt/sources.list.d/ubuntu.sources
     fi
   fi
-  if [ -n "${APT_ENABLE_PPA:-}" ]; then
+  if [ "${APT_ENABLE_PPA:-false}" != false ]; then
     add-apt-repository -y $APT_ENABLE_PPA
   fi
-  apt-get update
-  apt-get -y install \
+  PACKAGES="
     build-essential \
     crudini \
     glance-api \
+    heat-api \
+    heat-api-cfn \
+    heat-engine \
+    heat-tempest-plugin \
     keystone \
     libapt-pkg-dev \
     mysql-server \
@@ -51,7 +57,19 @@ prepare: |
     python3-tempestconf \
     rabbitmq-server \
     spice-html5 \
-    tempest
+    tempest"
+  if [ "${FEATURE_ENABLE_CEPH:-false}" != false ]; then
+    PACKAGES+="
+      ceph-mgr \
+      ceph-mon \
+      ceph-osd \
+      ceph-volume \
+      cinder-api \
+      cinder-scheduler \
+      cinder-volume"
+  fi
+  apt-get update
+  apt-get -y install $PACKAGES
 
   output=$(realpath ./prepare-output.txt)
 

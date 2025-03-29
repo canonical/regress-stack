@@ -33,7 +33,19 @@ jobs:
       fail-fast: false
       matrix:
         release: ${{ fromJson(needs.metadata.outputs.releases) }}
-    runs-on: [self-hosted, linux, AMD64, X64, xlarge, jammy]
+        proposed:
+          - ""
+          - proposed
+        ppa:
+          - ""
+          - ppa:ubuntu-security-proposed/ppa
+        ceph:
+          - ""
+          - ceph
+        exclude:
+          - proposed: proposed
+            ppa: ppa:ubuntu-security-proposed/ppa
+    runs-on: [self-hosted, linux, X64, medium, jammy]
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -73,7 +85,16 @@ jobs:
         set -euxo pipefail
         nproc
         free -h
-        RELEASES=${{ matrix.release }} PLAN=c6-m16 ./boot.sh
+        df -h
+
+        export RELEASES="${{ matrix.release }}"
+        APT_POCKETS="${{ matrix.proposed }}"
+        export APT_POCKETS=${APT_POCKETS:-false}
+        APT_PPAS="${{ matrix.ppa }}"
+        export APT_PPAS=${APT_PPAS:-false}
+        export FEATURE_ENABLE_CEPH="${{ matrix.ceph }}"
+        ./boot.sh
+
         mkdir /tmp/artifacts
         cp spread.yaml /tmp/artifacts/
         $HOME/go/bin/spread -reuse -artifacts /tmp/artifacts

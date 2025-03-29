@@ -1,21 +1,32 @@
 #!/bin/bash
 
 PLAN=${PLAN:-c4-m8}
-STORAGE=${STORAGE:-15G}
+STORAGE=${STORAGE:-30G}
 RELEASES=${RELEASES:-$(curl -s https://api.launchpad.net/devel/ubuntu/series | \
         jq -r '.entries[] | select(.version >= "22.04" and
                                (.status == "Supported" or
                                 .status == "Current Stable Release" or
                                 .status == "Active Development" or
-				.status == "Pre-release Freeze")) | .name')}
+                                .status == "Pre-release Freeze")) | .name')}
+PROPOSED=${APT_POCKETS:-"false true"}
+PPA=${APT_PPAS:-"false ppa:ubuntu-security-proposed/ppa"}
 for codename in $RELEASES; do
-    for proposed in '' true; do
-        for ppa in '' ppa:ubuntu-security-proposed/ppa; do
-            if [ -n "$proposed" ] && [ -n "$ppa" ]; then
+    for proposed in $PROPOSED; do
+        for ppa in $PPA; do
+            if [ "$proposed" != false ] && [ "$ppa" != false ]; then
                 continue
             fi
-	    cat << EOSYSTEM >> systems.$$
-      - ubuntu-${codename}${proposed:+-proposed}${ppa:+-ppa}:
+
+            name=ubuntu-$codename
+            if [ "$proposed" != false ]; then
+                name+=-proposed
+            fi
+            if [ "$ppa" != false ]; then
+                name+=-ppa
+            fi
+
+            cat << EOSYSTEM >> systems.$$
+      - ${name}:
           image: ubuntu-daily:${codename}
           environment:
             APT_ENABLE_PROPOSED: ${proposed}
