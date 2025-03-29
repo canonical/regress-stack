@@ -1,0 +1,16 @@
+project: regress-stack
+kill-timeout: 1h
+
+backends:
+  lxd:
+    vm: true
+    plan: @@SPREAD_PLAN@@
+    storage: @@SPREAD_STORAGE@@
+    systems:
+      @@SPREAD_SYSTEMS@@
+
+path: /home/test
+
+suites:
+  tests/spread/:
+    summary: Distro Regression Tests

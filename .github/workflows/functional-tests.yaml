@@ -2,37 +2,118 @@ name: Functional Tests
 
 on:
   workflow_call:
+  workflow_dispatch:
 
 
 jobs:
+  metadata:
+    name: Ubuntu supported releases
+    runs-on: ubuntu-latest
+    outputs:
+      releases: ${{ steps.generate-releases.outputs.releases }}
+    steps:
+      - name: Query Launchpad for supported releases
+        id: generate-releases
+        run: |
+          set -euxo pipefail
+          echo -n releases= >> ${GITHUB_OUTPUT}
+          curl -s https://api.launchpad.net/devel/ubuntu/series | \
+            jq '.entries[] | select(.version >= "22.04" and
+                                    (.status == "Supported" or
+                                     .status == "Current Stable Release" or
+                                     .status == "Active Development" or
+                                     .status == "Pre-release Freeze")) |
+                .name' | jq -cs | \
+            tee -a ${GITHUB_OUTPUT}
+          cat ${GITHUB_OUTPUT}
   functional-tests:
+    needs:
+      - metadata
     strategy:
       fail-fast: false
       matrix:
-        base: [noble, jammy]
-    runs-on: [self-hosted, large, "${{ matrix.base }}", x64]
+        release: ${{ fromJson(needs.metadata.outputs.releases) }}
+        proposed:
+          - ""
+          - proposed
+        ppa:
+          - ""
+          - ppa:ubuntu-security-proposed/ppa
+        ceph:
+          - ""
+          - ceph
+        exclude:
+          - proposed: proposed
+            ppa: ppa:ubuntu-security-proposed/ppa
+    runs-on: [self-hosted, linux, X64, medium, jammy]
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        submodules: true
 
     - name: Install dependencies
-      env:
-        DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo apt update
-        sudo apt install --yes dpkg-dev libapt-pkg-dev keystone mysql-server placement-api glance-api tempest python3-tempestconf python3-openstackclient neutron-server neutron-ovn-metadata-agent openvswitch-switch ovn-central ovn-host nova-api nova-conductor nova-scheduler nova-compute nova-spiceproxy spice-html5 rabbitmq-server ceph-mgr ceph-mon ceph-osd ceph-volume cinder-api cinder-scheduler cinder-volume heat-api heat-api-cfn heat-engine heat-tempest-plugin
+        set -euxo pipefail
+        sudo apt-get update
+        sudo apt-get install -yq snapd
+        sudo systemctl enable snapd
+        sudo systemctl restart snapd
+        sudo snap refresh --channel 5.21/stable lxd \
+            || sudo snap install --channel 5.21/stable lxd
+        sudo snap install --channel 1.24/stable --classic go
+        cd spread
+        go install ./...
 
-    - name: Install uv
-      run: sudo snap install --classic astral-uv
-
-    - name: Plan
+    - name: Clear FORWARD firewall rules
       run: |
-        sudo uv run regress-stack plan
+        set -euxo pipefail
+        # Docker can inject rules causing firewall conflicts
+        sudo iptables -P FORWARD ACCEPT  || true
+        sudo ip6tables -P FORWARD ACCEPT || true
+        sudo iptables -F FORWARD  || true
+        sudo ip6tables -F FORWARD || true
 
-    - name: Setup
+    - name: Configure LXD
       run: |
-        sudo uv run regress-stack setup
+        set -euxo pipefail
+        sudo snap set lxd daemon.group=adm
+        sudo lxd init --auto
 
-    - name: Test
+    - name: Spread
       run: |
-        sudo uv run regress-stack test --concurrency 4
+        set -euxo pipefail
+        nproc
+        free -h
+        df -h
+
+        export RELEASES="${{ matrix.release }}"
+        APT_POCKETS="${{ matrix.proposed }}"
+        export APT_POCKETS=${APT_POCKETS:-false}
+        APT_PPAS="${{ matrix.ppa }}"
+        export APT_PPAS=${APT_PPAS:-false}
+        export FEATURE_ENABLE_CEPH="${{ matrix.ceph }}"
+        ./boot.sh
+
+        mkdir /tmp/artifacts
+        cp spread.yaml /tmp/artifacts/
+        $HOME/go/bin/spread -reuse -artifacts /tmp/artifacts
+
+    - name: Sanitize artifacts
+      if: always()
+      run: |
+        set -euxo pipefail
+        # The upload-artifact action does not allow colon in paths.
+        for dent in /tmp/artifacts/*; do
+          sanitized_dent=${dent//:/-}
+          if [ "$dent" != "$sanitized_dent" ]; then
+            mv -v $dent ${dent//:/-}
+          fi
+        done
+
+    - name: Artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.release }}-artifacts
+        path: /tmp/artifacts/
