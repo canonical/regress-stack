@@ -72,7 +72,7 @@ jobs:
           - proposed: proposed
             ppa: "${{ inputs.ppa || 'ppa:ubuntu-security-proposed/ppa' }}"
     env:
-      TEMPEST_CHANNEL: "${{ inputs.tempest_source }}"
+      TEMPEST_CHANNEL: "${{ inputs.tempest_channel }}"
       TEMPEST_SOURCE: "${{ inputs.tempest_source }}"
       TEST_EXCLUDE_REGEXES: "${{ inputs.test_exclude_regexes }}"
       TEST_INCLUDE_REGEXES: "${{ inputs.test_include_regexes }}"
