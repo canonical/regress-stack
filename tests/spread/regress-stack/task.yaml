@@ -19,7 +19,9 @@ prepare: |
   Pin-Priority: 500
   EOF
     codename=$(lsb_release -sc)
-    if [ "$codename" = "jammy" ]; then
+    # noble is the first release that introduces deb822 format for sources.list
+    # https://discourse.ubuntu.com/t/spec-apt-deb822-sources-by-default/29333
+    if [[ "$codename" < "noble" ]]; then
       echo \
         "deb http://archive.ubuntu.com/ubuntu " \
         "${codename}-proposed main restricted" \
