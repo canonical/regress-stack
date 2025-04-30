@@ -9,6 +9,7 @@ environment:
 
 prepare: |
   set -euxo pipefail
+  codename=$(lsb_release -sc)
   if ! grep -q 127.0.1.1 /etc/hosts; then
     echo "127.0.1.1 $(hostname)" >> /etc/hosts
   fi
@@ -18,7 +19,6 @@ prepare: |
   Pin: release a=*-proposed
   Pin-Priority: 500
   EOF
-    codename=$(lsb_release -sc)
     # noble is the first release that introduces deb822 format for sources.list
     # https://discourse.ubuntu.com/t/spec-apt-deb822-sources-by-default/29333
     if [[ "$codename" < "noble" ]]; then
@@ -72,9 +72,16 @@ prepare: |
       cinder-volume"
   fi
   if [ "${TEMPEST_SOURCE:-apt}" = apt ]; then
+    # The packages heat-tempest-plugin and python3-tempestconf are available
+    # since Ubuntu 22.04 (Jammy).
+    if [[ "$codename" < "jammy" ]]; then
+      echo "Skiping installation of heat-tempest-plugin and python3-tempestconf"
+    else
+      PACKAGES+="
+        heat-tempest-plugin \
+        python3-tempestconf"
+    fi
     PACKAGES+="
-      heat-tempest-plugin \
-      python3-tempestconf \
       tempest"
   elif [ "${TEMPEST_SOURCE:-apt}" = snap ]; then
     PACKAGES+="
