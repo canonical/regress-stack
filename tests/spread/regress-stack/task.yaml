@@ -66,10 +66,15 @@ prepare: |
       ceph-mgr \
       ceph-mon \
       ceph-osd \
-      ceph-volume \
       cinder-api \
       cinder-scheduler \
       cinder-volume"
+    if [[ "$codename" < "jammy" ]]; then
+      echo "Skiping installation of ceph-volume"
+    else
+      PACKAGES+="
+        ceph-volume"
+    fi
   fi
   if [ "${TEMPEST_SOURCE:-apt}" = apt ]; then
     # The packages heat-tempest-plugin and python3-tempestconf are available
