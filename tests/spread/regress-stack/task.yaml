@@ -34,6 +34,11 @@ prepare: |
   if [ "${APT_ENABLE_PPA:-false}" != false ]; then
     add-apt-repository -y $APT_ENABLE_PPA
   fi
+  if [ "${APT_ENABLE_OVN_PPA}" != false ]; then
+    apt-get update -q
+    apt-get install -qy ubuntu-cloud-keyring
+    echo "deb http://ubuntu-cloud.archive.canonical.com/ubuntu focal-updates/ovn-22.03 main" >> /etc/apt/sources.list
+  fi
   PACKAGES="
     build-essential \
     crudini \
