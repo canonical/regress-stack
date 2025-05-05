@@ -24,6 +24,12 @@ for codename in $RELEASES; do
             if [ "$ppa" != false ]; then
                 name+=-ppa
             fi
+            if [ "$codename" == "focal" ]; then
+                # Enabling ovn-22.03 ppa
+                ovn_ppa=true
+            else
+                ovn_ppa=false
+            fi
 
             cat << EOSYSTEM >> systems.$$
       - ${name}:
@@ -31,6 +37,7 @@ for codename in $RELEASES; do
           environment:
             APT_ENABLE_PROPOSED: ${proposed}
             APT_ENABLE_PPA: ${ppa}
+            APT_ENABLE_OVN_PPA: ${ovn_ppa}
 EOSYSTEM
         done
     done

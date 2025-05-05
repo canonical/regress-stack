@@ -44,7 +44,7 @@ jobs:
           set -euxo pipefail
           echo -n releases= >> ${GITHUB_OUTPUT}
           curl -s https://api.launchpad.net/devel/ubuntu/series | \
-            jq '.entries[] | select(.version >= "22.04" and
+            jq '.entries[] | select(.version >= "20.04" and
                                     (.status == "Supported" or
                                      .status == "Current Stable Release" or
                                      .status == "Active Development" or
