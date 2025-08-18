@@ -7,6 +7,11 @@ on:
       ppa:
         required: false
         type: string
+      ppa_needs_proposed:
+        description: "PPA requires proposed pocket"
+        required: false
+        type: boolean
+        default: false
       release:
         description: "JSON encoded list of releases."
         required: false
@@ -119,12 +124,17 @@ jobs:
         free -h
         df -h
 
+        PROPOSED="${{ matrix.proposed }}"
         artifact_name=ubuntu-${{ matrix.release }}
-        if [ -n "${{ matrix.proposed }}" ]; then
-          artifact_name+=-proposed
-        fi
         if [ -n "${{ matrix.ppa }}" ]; then
           artifact_name+=-ppa
+          # Force proposed pocket if the PPA needs it
+          if [ "${{ inputs.ppa_needs_proposed }}" = "true" ]; then
+            PROPOSED="proposed"
+          fi
+        fi
+        if [ -n "$PROPOSED" ]; then
+          artifact_name+=-proposed
         fi
         if [ -n "${{ matrix.ceph }}" ]; then
           artifact_name+=-ceph
@@ -132,7 +142,7 @@ jobs:
         echo "artifact_name=${artifact_name}" >> $GITHUB_OUTPUT
 
         export RELEASES="${{ matrix.release }}"
-        APT_POCKETS="${{ matrix.proposed }}"
+        APT_POCKETS="$PROPOSED"
         export APT_POCKETS=${APT_POCKETS:-false}
         APT_PPAS="${{ matrix.ppa }}"
         export APT_PPAS=${APT_PPAS:-false}
