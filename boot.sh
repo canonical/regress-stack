@@ -13,10 +13,6 @@ PPA=${APT_PPAS:-"false ppa:ubuntu-security-proposed/ppa"}
 for codename in $RELEASES; do
     for proposed in $PROPOSED; do
         for ppa in $PPA; do
-            if [ "$proposed" != false ] && [ "$ppa" != false ]; then
-                continue
-            fi
-
             name=ubuntu-$codename
             if [ "$proposed" != false ]; then
                 name+=-proposed
