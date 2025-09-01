@@ -51,6 +51,10 @@ prepare: |
     nova-conductor \
     nova-scheduler \
     nova-spiceproxy \
+    octavia-api \
+    octavia-driver-agent \
+    octavia-housekeeping \
+    octavia-worker \
     openvswitch-switch \
     ovn-central \
     ovn-host \
@@ -59,6 +63,7 @@ prepare: |
     python3-apt \
     python3-networkx \
     python3-openstackclient \
+    python3-ovn-octavia-provider \
     rabbitmq-server \
     spice-html5"
   if [ "${FEATURE_ENABLE_CEPH:-false}" != false ]; then
@@ -74,6 +79,7 @@ prepare: |
   if [ "${TEMPEST_SOURCE:-apt}" = apt ]; then
     PACKAGES+="
       heat-tempest-plugin \
+      octavia-tempest-plugin \
       python3-tempestconf \
       tempest"
   elif [ "${TEMPEST_SOURCE:-apt}" = snap ]; then
