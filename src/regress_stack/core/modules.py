@@ -30,8 +30,20 @@ def load_module(name: str, path: str):
     return module_loaded
 
 
+class ModuleInfo:
+    name: str
+    packages: typing.List[str]
+
+    def __init__(self, name: str, module: types.ModuleType):
+        self.name = name.rsplit(".")[-1]
+        self.packages = getattr(module, "PACKAGES")
+
+    def __str__(self):
+        return f"{self.name} ({' '.join(self.packages)})"
+
+
 def modules() -> typing.List[str]:
-    return list(module.rsplit(".")[-1] for module in _MOD_REGISTRY.keys())
+    return list(ModuleInfo(name, module) for name, module in _MOD_REGISTRY.items())
 
 
 class ModuleComp:
