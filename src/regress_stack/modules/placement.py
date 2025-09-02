@@ -11,7 +11,10 @@ LOG = logging.getLogger(__name__)
 
 DEPENDENCIES = {keystone, mysql}
 PACKAGES = ["placement-api"]
-LOGS = ["/var/log/placement/"]  # empty?
+LOGS = [
+    "/var/log/apache2/placement_api_access.log",
+    "/var/log/apache2/placement_api_error.log",
+]
 
 CONF = "/etc/placement/placement.conf"
 URL = f"http://{core_utils.my_ip()}:8778/"
