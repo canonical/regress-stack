@@ -22,6 +22,7 @@ To get started with Regress Stack, follow these simple steps:
 2. **Install Dependencies**:
 
    ```bash
+   sudo apt install dpkg-dev python3-dev python-apt-dev
    uv sync
    ```
 
