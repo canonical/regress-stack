@@ -126,8 +126,8 @@ def sudo(
     return run("sudo", opts + [cmd, *args])
 
 
-def restart_service(service: str):
-    run("systemctl", ["restart", service])
+def restart_service(*services: str):
+    run("systemctl", ["restart", *services])
 
 
 def restart_apache():
