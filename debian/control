@@ -9,6 +9,7 @@ Build-Depends:
  python3-all,
 Build-Depends-Indep:
  python3-apt,
+ python3-click,
  python3-networkx,
  python3-openstackclient,
  python3-pyroute2,

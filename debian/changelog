@@ -1,3 +1,9 @@
+regress-stack (0.3.0) UNRELEASED; urgency=medium
+
+  * d/control: add click as build dependency.
+
+ -- Guillaume Boutry <guillaume.boutry@canonical.com>  Tue, 16 Sep 2025 13:14:47 +0200
+
 regress-stack (0.2.0) plucky; urgency=medium
 
   [James Page]
