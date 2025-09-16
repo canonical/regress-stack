@@ -169,21 +169,30 @@ def get_subgraph_to_path(G: nx.DiGraph, target: str) -> nx.DiGraph:
 
 
 def get_execution_order(
-    modules_mod: types.ModuleType, target=None
+    modules_mod: types.ModuleType, target=None, filter_missing=True
 ) -> typing.List[ModuleComp]:
     """Determine the execution order of modules based on dependencies.
 
     Always include the utils module as the first module.
+
+    Args:
+        modules_mod: The modules package to analyze
+        target: Optional target module name to limit the scope
+        filter_missing: If True, filter out modules with missing dependencies
     """
     LOG.debug("Building dependency graph from %r...", modules_mod.__name__)
 
-    utils_mod = modules_mod.utils
-    utils = ModuleComp(str(utils_mod.__name__), utils_mod)
+    # Load utils module using the same approach as build_dependency_graph
+    utils_canonical_name = str(modules_mod.__package__) + ".utils"
+    utils_mod = load_module(utils_canonical_name, modules_mod.__path__[0])
+    utils = ModuleComp(utils_canonical_name, utils_mod)
+
     if target == "utils":
         return [utils]
 
     graph = build_dependency_graph(modules_mod)
-    graph = filter_graph(graph)
+    if filter_missing:
+        graph = filter_graph(graph)
 
     if not nx.is_directed_acyclic_graph(graph):
         raise RuntimeError("Circular dependency detected!")
@@ -202,7 +211,7 @@ def get_execution_order(
     else:
         raise RuntimeError(f"Target {target!r} not found!")
 
-    sg: nx.DiGraph[ModuleComp] = get_subgraph_to_path(graph, end_node)
+    sg = get_subgraph_to_path(graph, end_node)
     order = list(nx.lexicographical_topological_sort(sg))
     if utils in order:
         order.remove(utils)
