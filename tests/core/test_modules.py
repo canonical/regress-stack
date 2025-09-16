@@ -223,3 +223,69 @@ def test_filter_graph_optional_dependency_missing():
     assert graph.has_node("mysql")
     assert graph.has_node("glance")
     assert graph.has_edge("mysql", "glance")
+
+
+def test_get_execution_order_without_filtering():
+    """Test that get_execution_order with filter_missing=False includes all modules."""
+    from regress_stack.core.modules import get_execution_order
+    import regress_stack.modules
+
+    # Test with nova target without filtering
+    execution_order = get_execution_order(
+        regress_stack.modules, "nova", filter_missing=False
+    )
+    packages = []
+    for module_comp in execution_order:
+        packages.extend(getattr(module_comp.module, "PACKAGES", []))
+
+    # Should include nova packages
+    assert "nova-api" in packages
+    assert "nova-conductor" in packages
+    # Should include dependency packages even if not installed
+    assert "mysql-server" in packages
+    assert "keystone" in packages
+    assert "rabbitmq-server" in packages
+
+
+def test_get_execution_order_utils_without_filtering():
+    """Test that get_execution_order with utils target returns only utils packages."""
+    from regress_stack.core.modules import get_execution_order
+    import regress_stack.modules
+
+    execution_order = get_execution_order(
+        regress_stack.modules, "utils", filter_missing=False
+    )
+    packages = []
+    for module_comp in execution_order:
+        packages.extend(getattr(module_comp.module, "PACKAGES", []))
+
+    assert packages == ["crudini"]
+
+
+def test_get_execution_order_all_without_filtering():
+    """Test that get_execution_order without target returns all packages."""
+    from regress_stack.core.modules import get_execution_order
+    import regress_stack.modules
+
+    execution_order = get_execution_order(
+        regress_stack.modules, None, filter_missing=False
+    )
+    packages = []
+    for module_comp in execution_order:
+        packages.extend(getattr(module_comp.module, "PACKAGES", []))
+
+    # Should include packages from all modules
+    assert "nova-api" in packages
+    assert "keystone" in packages
+    assert "heat-api" in packages
+    assert "magnum-api" in packages
+    assert "crudini" in packages
+
+
+def test_get_execution_order_invalid_target_without_filtering():
+    """Test that get_execution_order raises error for invalid target."""
+    from regress_stack.core.modules import get_execution_order
+    import regress_stack.modules
+
+    with pytest.raises(RuntimeError, match="Target 'invalid' not found"):
+        get_execution_order(regress_stack.modules, "invalid", filter_missing=False)
