@@ -134,6 +134,10 @@ def restart_apache():
     restart_service("apache2")
 
 
+def enable_service(service: str):
+    run("systemctl", ["enable", service])
+
+
 @functools.lru_cache()
 def fqdn() -> str:
     return run("hostname", ["-f"]).strip()
