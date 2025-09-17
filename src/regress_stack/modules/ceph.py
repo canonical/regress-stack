@@ -4,7 +4,6 @@
 import functools
 import logging
 import shutil
-import subprocess
 import typing
 import uuid
 from pathlib import Path
@@ -31,53 +30,10 @@ MON_SETUP_DONE = MON_DATA_FOLDER / "done"
 MGR_DATA_FOLDER = Path(f"/var/lib/ceph/mgr/{CLUSTER}-{core_utils.fqdn()}")
 MGR_KEYRING = MGR_DATA_FOLDER / "keyring"
 MGR_SETUP_DONE = MGR_DATA_FOLDER / "done"
-LOOP_DEVICE_PATH = Path("/var/lib/ceph-osd")
+OSD_DATA_PATH = Path("/var/lib/ceph/osd")
 RBD_UUID = Path("/etc/ceph/rbd_secret_uuid")
 
 OSD_SIZE_GB = 2
-BS = 4096
-COUNT = (OSD_SIZE_GB * 1024**3) // BS
-
-CEPH_OSD_UNIT_PATH = Path("/etc/systemd/system/ceph-osd@.service")
-CEPH_OSD_SYSTEMD = r"""
-[Unit]
-Description=Ceph object storage daemon osd.%i
-PartOf=ceph-osd.target
-After=network-online.target local-fs.target time-sync.target
-Before=remote-fs-pre.target ceph-osd.target
-Wants=network-online.target local-fs.target time-sync.target remote-fs-pre.target ceph-osd.target
-
-[Service]
-Environment=CLUSTER=ceph
-EnvironmentFile=-/etc/default/ceph
-ExecReload=/bin/kill -HUP $MAINPID
-ExecStart=/usr/bin/ceph-osd -f --cluster ${CLUSTER} --id %i --setuser ceph --setgroup ceph
-ExecStartPre=/usr/lib/ceph/ceph-osd-prestart.sh --cluster ${CLUSTER} --id %i
-LimitNOFILE=1048576
-LimitNPROC=1048576
-LockPersonality=true
-MemoryDenyWriteExecute=true
-# Need NewPrivileges via `sudo smartctl`
-NoNewPrivileges=false
-PrivateTmp=true
-ProtectControlGroups=true
-ProtectHome=true
-ProtectHostname=true
-ProtectKernelLogs=true
-ProtectKernelModules=true
-# flushing filestore requires access to /proc/sys/vm/drop_caches
-ProtectKernelTunables=false
-ProtectSystem=full
-Restart=on-failure
-RestartSec=10
-RestrictSUIDSGID=true
-StartLimitBurst=3
-StartLimitInterval=30min
-TasksMax=infinity
-
-[Install]
-WantedBy=ceph-osd.target
-"""
 
 
 def installed() -> bool:
@@ -116,7 +72,7 @@ def setup():
     setup_mon()
     setup_mgr()
     for i in range(3):
-        core_utils.exists_cache(LOOP_DEVICE_PATH / f"ceph-{i}")(setup_osd)(i)
+        core_utils.exists_cache(OSD_DATA_PATH / f"ceph-{i}" / "done")(setup_osd)(i)
 
 
 @functools.lru_cache
@@ -301,52 +257,75 @@ def setup_mon():
         "ceph",
     )
     MON_SETUP_DONE.touch()
-    core_utils.restart_service(f"ceph-mon@{core_utils.fqdn()}")
+    unit = f"ceph-mon@{core_utils.fqdn()}"
+    core_utils.restart_service(unit)
+    core_utils.enable_service(unit)
     return MON_SETUP_DONE
 
 
 @core_utils.exists_cache(MGR_SETUP_DONE)
 def setup_mgr():
-    core_utils.restart_service(f"ceph-mgr@{core_utils.fqdn()}")
+    unit = f"ceph-mgr@{core_utils.fqdn()}"
+    core_utils.restart_service(unit)
+    core_utils.enable_service(unit)
     MGR_SETUP_DONE.touch()
     return MGR_SETUP_DONE
 
 
-def setup_loop_device(name: str) -> str:
-    if not LOOP_DEVICE_PATH.exists():
-        LOOP_DEVICE_PATH.mkdir(parents=True, exist_ok=True)
-    core_utils.run(
-        "dd",
-        ["if=/dev/zero", f"of={LOOP_DEVICE_PATH / name}", f"bs={BS}", f"count={COUNT}"],
-    )
-    lo_device = core_utils.run(
-        "losetup", ["--show", "--find", str(LOOP_DEVICE_PATH / name)]
-    ).strip()
-    LOG.debug("Created loop device %s", lo_device)
-    return lo_device
-
-
 def setup_osd(i: int) -> Path:
-    name = f"ceph-{i}"
-    lo_device = setup_loop_device(name)
-    core_utils.run("wipefs", ["--all", lo_device])
-    core_utils.run("sgdisk", ["--zap-all", lo_device])
+    osd_dir = OSD_DATA_PATH / f"ceph-{i}"
+    osd_dir.mkdir(parents=True, exist_ok=True)
+    shutil.chown(osd_dir, "ceph", "ceph")
+
+    backing_file = osd_dir / "backing.img"
     core_utils.run(
-        "ceph-volume", ["raw", "prepare", "--bluestore", "--data", lo_device]
+        "fallocate",
+        ["--length", f"{OSD_SIZE_GB}G", str(backing_file)],
     )
-    try:
-        core_utils.run("ceph-volume", ["raw", "activate", "--osd-id", str(i)])
-    except subprocess.CalledProcessError as e:
-        if "systemd support not yet implemented" in e.stderr:
-            template_systemd_osd()
-            core_utils.run(
-                "ceph-volume", ["raw", "activate", "--osd-id", str(i), "--no-systemd"]
-            )
-        else:
-            LOG.error("Failed to activate osd %d: %s", i, e)
-            raise
-    core_utils.restart_service(f"ceph-osd@{i}")
-    return LOOP_DEVICE_PATH / name
+    shutil.chown(backing_file, user="ceph", group="ceph")
+
+    osd_id = core_utils.run("ceph", ["osd", "create"]).strip()
+
+    core_utils.run(
+        "ceph",
+        [
+            "auth",
+            "get-or-create",
+            f"osd.{osd_id}",
+            "-o",
+            str(osd_dir / "keyring"),
+            "mon",
+            "allow profile osd",
+            "mgr",
+            "allow profile osd",
+            "osd",
+            "allow *",
+        ],
+    )
+
+    core_utils.sudo(
+        "ceph-osd",
+        [
+            "--mkfs",
+            "-i",
+            osd_id,
+            "--cluster",
+            CLUSTER,
+            "--keyring",
+            str(OSD_KEYRING),
+            "--no-mon-config",
+            "--bluestore-block-path",
+            str(backing_file),
+        ],
+        "ceph",
+    )
+
+    unit = f"ceph-osd@{osd_id}"
+    core_utils.restart_service(unit)
+    core_utils.enable_service(unit)
+    done_file = osd_dir / "done"
+    done_file.touch()
+    return done_file
 
 
 def ensure_pool(name: str) -> str:
@@ -399,9 +378,3 @@ def rbd_uuid() -> str:
     uuid_str = str(uuid.uuid4())
     RBD_UUID.write_text(uuid_str)
     return uuid_str
-
-
-@core_utils.exists_cache(CEPH_OSD_UNIT_PATH)
-def template_systemd_osd() -> Path:
-    CEPH_OSD_UNIT_PATH.write_text(CEPH_OSD_SYSTEMD)
-    return CEPH_OSD_UNIT_PATH
