@@ -167,7 +167,7 @@ jobs:
 
     - name: Artifacts
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: ${{ steps.spread.outputs.artifact_name }}
         path: /tmp/artifacts/
