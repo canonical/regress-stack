@@ -1354,8 +1354,8 @@ wheels = [
 
 [[package]]
 name = "python-apt"
-version = "2.4.0"
-source = { git = "https://salsa.debian.org/apt-team/python-apt.git?rev=2.4.y#765772fad2d3611b952b6ad416c6b765739a902a" }
+version = "3.0.0+ubuntu1"
+source = { git = "https://salsa.debian.org/apt-team/python-apt.git?rev=3.0.0ubuntu1#5ee94e95742f32308910765b1ff7c1366f6f84b1" }
 
 [[package]]
 name = "python-cinderclient"
@@ -1559,7 +1559,7 @@ requires-dist = [
     { name = "crudini", specifier = ">=0.9.5" },
     { name = "networkx", specifier = ">=2.4" },
     { name = "pyroute2", specifier = "<0.8" },
-    { name = "python-apt", git = "https://salsa.debian.org/apt-team/python-apt.git?rev=2.4.y" },
+    { name = "python-apt", git = "https://salsa.debian.org/apt-team/python-apt.git?rev=3.0.0ubuntu1" },
     { name = "python-openstackclient", specifier = ">=7.1.4" },
 ]
 
