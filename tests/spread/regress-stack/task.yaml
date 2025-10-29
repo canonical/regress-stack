@@ -91,8 +91,8 @@ prepare: |
   output=$(realpath ./prepare-output.txt)
 
   pushd $SPREAD_PATH/src
-  python3 -m regress_stack plan | tee -a $output
-  python3 -m regress_stack setup | tee -a $output
+  python3 -m regress_stack plan |& tee -a $output
+  python3 -m regress_stack setup |& tee -a $output
   popd
 
 execute: |
@@ -104,7 +104,7 @@ execute: |
   apt list '?narrow(?installed,?origin(LP-PPA.*))' | tee -a $output
 
   pushd $SPREAD_PATH/src
-  python3 -m regress_stack test --concurrency auto | tee -a $output
+  python3 -m regress_stack test --concurrency auto |& tee -a $output
   popd
 
 artifacts:
