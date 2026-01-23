@@ -28,7 +28,11 @@ def packages(target=None):
         # Collect all packages
         all_packages = []
         for module_comp in execution_order:
-            packages_list = getattr(module_comp.module, "PACKAGES", [])
+            if hasattr(module_comp.module, "determine_packages"):
+                packages_list = module_comp.module.determine_packages()
+            else:
+                packages_list = getattr(module_comp.module, "PACKAGES", [])
+
             all_packages.extend(packages_list)
 
         # Remove duplicates while preserving order

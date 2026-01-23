@@ -1,6 +1,7 @@
 # Copyright 2025 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+import copy
 import functools
 import ipaddress
 import logging
@@ -14,7 +15,8 @@ from regress_stack.modules import utils as module_utils
 LOG = logging.getLogger(__name__)
 
 DEPENDENCIES = {keystone, mysql, ovn, rabbitmq}
-PACKAGES = ["neutron-server", "neutron-ovn-metadata-agent"]
+_BASE_PACKAGES = ["neutron-ovn-metadata-agent"]
+
 LOGS = ["/var/log/neutron/"]
 
 CONF = "/etc/neutron/neutron.conf"
@@ -27,6 +29,21 @@ METADATA_SECRET = "bonjour"
 EXTERNAL_NETWORK = "external-network"
 
 NEUTRON_FLAMINGO_VERSION = "2:26.0.0-0ubuntu1~cloud0"
+
+
+def determine_packages() -> list[str]:
+    """Determine the packages to install for this module."""
+
+    packages = copy.deepcopy(_BASE_PACKAGES)
+    if (
+        core_apt.PkgVersionCompare("python3-neutron", candidate=True)
+        >= NEUTRON_FLAMINGO_VERSION
+    ):
+        packages += ["neutron-rpc-server", "neutron-api", "neutron-periodic-workers"]
+    else:
+        packages += ["neutron-server"]
+
+    return packages
 
 
 def setup():
