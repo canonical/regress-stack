@@ -88,6 +88,14 @@ prepare: |
   apt-get update
   apt-get -y install $PACKAGES
 
+  # NOTE(freyes): workaround for http://pad.lv/2130370
+  if [ ! -f /usr/bin/keystone-wsgi-public ]; then
+    cp /root/regress-stack/files/keystone-wsgi-public /usr/bin/keystone-wsgi-public
+  fi
+  if [ ! -f /usr/bin/keystone-wsgi-admin ]; then
+    cp /root/regress-stack/files/keystone-wsgi-admin /usr/bin/keystone-wsgi-admin
+  fi
+
   output=$(realpath ./prepare-output.txt)
 
   pushd $SPREAD_PATH/src
