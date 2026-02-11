@@ -9,6 +9,7 @@ import stat
 import subprocess
 import time
 
+from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import (
     ceph,
@@ -49,6 +50,8 @@ URL = f"http://{core_utils.my_ip()}:8774/v2.1"
 NOVA_CEPH_UUID = pathlib.Path("/etc/nova/ceph_uuid")
 SERVICE = "nova"
 SERVICE_TYPE = "compute"
+
+NOVA_FLAMINGO_VERSION = "3:31.0.0+git2025070714.1c03429337-0ubuntu1"
 
 
 def setup():
@@ -166,10 +169,17 @@ def setup():
             "nova-manage", ["cell_v2", "create_cell", "--name=cell1"], user="nova"
         )
     core_utils.sudo("nova-manage", ["db", "sync"], user="nova")
-    core_utils.restart_service("nova-api")
-    core_utils.restart_service("nova-scheduler")
-    core_utils.restart_service("nova-conductor")
-    core_utils.restart_service("nova-compute")
+
+    nova_daemons = ["nova-api", "nova-scheduler", "nova-conductor", "nova-compute"]
+
+    if core_apt.PkgVersionCompare("python3-nova") >= NOVA_FLAMINGO_VERSION:
+        nova_daemons.remove("nova-api")
+        # nova-api runs under apache2 as a WSGI application
+        nova_daemons.insert(0, "apache2")
+
+    for _daemon in nova_daemons:
+        core_utils.restart_service(_daemon)
+
     # Give some time for nova-compute to be up before discovering hosts
     for _ in range(25):
         output = core_utils.sudo(
