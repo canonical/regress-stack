@@ -141,8 +141,8 @@ def setup():
     # deprecated neutron-server.
     if core_apt.PkgVersionCompare("python3-neutron") >= NEUTRON_FLAMINGO_VERSION:
         neutron_daemons = [
+            "apache2",  # neutron-api runs under apache2 as a WSGI application
             "neutron-rpc-server",
-            "neutron-api",
             "neutron-periodic-workers",
         ]
     else:
