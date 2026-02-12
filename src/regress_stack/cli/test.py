@@ -8,6 +8,7 @@ import pathlib
 import subprocess
 
 import regress_stack.modules
+from regress_stack.core import apt as core_apt
 from regress_stack.core import utils
 from regress_stack.core.modules import get_execution_order
 from regress_stack.modules import keystone
@@ -30,6 +31,11 @@ LOG = logging.getLogger(__name__)
 @utils.measure_time
 def test(concurrency):
     """Run the regression tests using Tempest."""
+
+    # NOTE(freyes): use PPA to fix http://pad.lv/2141604 if needed.
+    if core_apt.PkgVersionCompare("python3-tempestconf") < "3.5.1-1ubuntu1~cloud0":
+        core_apt.add_ppa("ppa:freyes/lp2141604")
+        utils.run("apt", ["install", "-yq", "--only-upgrade", "python3-tempestconf"])
     env = os.environ.copy()
     env.update(keystone.auth_env())
     dir_name = "mycloud01"
