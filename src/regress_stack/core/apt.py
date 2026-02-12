@@ -6,6 +6,7 @@ import typing
 import apt
 import apt_pkg
 
+from regress_stack.core import utils
 
 APT_CACHE: typing.Optional[apt.Cache] = None
 
@@ -42,6 +43,16 @@ def get_pkg_version(pkg: str) -> typing.Optional[str]:
     if pkg_version is None:
         return None
     return pkg_version.version
+
+
+def add_ppa(ppa: str) -> None:
+    """Add a PPA to the system."""
+    utils.run("add-apt-repository", ["-y", ppa])
+
+
+def remove_ppa(ppa: str) -> None:
+    """Remove a PPA from the system."""
+    utils.run("add-apt-repository", ["-y", "--remove", ppa])
 
 
 class PkgVersionCompare:
