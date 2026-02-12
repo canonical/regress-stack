@@ -4,6 +4,7 @@
 import click
 import logging
 import os
+import json
 import pathlib
 import subprocess
 
@@ -40,7 +41,15 @@ def test(concurrency):
     env.update(keystone.auth_env())
     dir_name = "mycloud01"
     release = utils.release()
-    utils.run("tempest", ["init", dir_name])
+    workspaces = json.loads(
+        utils.run("tempest", ["workspace", "list", "--format", "json"])
+    )
+    workspaces = [ws["Name"] for ws in workspaces]
+    if dir_name in workspaces:
+        LOG.info("Tempest workspace %s already exists, skipping init", dir_name)
+    else:
+        utils.run("tempest", ["init", dir_name])
+
     utils.run(
         "discover-tempest-config",
         [
