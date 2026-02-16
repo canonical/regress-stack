@@ -10,7 +10,7 @@ from regress_stack.core.modules import get_execution_order
 
 def _output_log_file(path: pathlib.Path):
     """Output the contents of a log file to stdout."""
-    with path.open() as log_file:
+    with path.open(encoding="utf-8", errors="replace") as log_file:
         for line in log_file:
             print(line, end="")
 
