@@ -13,31 +13,57 @@ To get started with Regress Stack, follow these simple steps:
    cd regress-stack
    ```
 
-3. **Install pre-commit**:
+2. **Install pre-commit**:
 
    ```bash
    uvx pre-commit install
    ```
 
-2. **Install Dependencies**:
+3. **Install Dependencies**:
 
    ```bash
    sudo apt install dpkg-dev python3-dev python-apt-dev
    uv sync
    ```
 
-3. **Run Tests**:
+4. **Run Tests**:
 
    ```bash
    uv run py.test
    ```
 
-4. **Run the Regress Stack**:
+5. **Run the Regress Stack**:
 
    ```bash
    uv run regress-stack setup
    uv run regress-stack test
    ```
+
+Regress Stack currently supports the following OpenStack modules:
+
+- **Ceph**: `ceph-mgr`, `ceph-mon`, `ceph-osd`, `ceph-volume`
+- **Cinder**: `cinder-api`, `cinder-scheduler`, `cinder-volume`
+- **Glance**: `glance-api`
+- **Heat**: `heat-api`, `heat-api-cfn`, `heat-engine`
+- **Keystone**: `keystone`, `apache2`, `libapache2-mod-wsgi-py3`
+- **Magnum**: `magnum-api`, `magnum-conductor`
+- **Neutron**: `neutron-server`, `neutron-ovn-metadata-agent`
+- **Nova**: `nova-api`, `nova-conductor`, `nova-scheduler`, `nova-compute`, `nova-spiceproxy`, `spice-html5`
+- **OVN**: `ovn-central`, `openvswitch-switch`, `ovn-host`
+- **Placement**: `placement-api`
+
+The following modules are available on [Sunbeam](https://github.com/canonical/snap-openstack) but are not currently supported by Regress Stack:
+
+- **Horizon**
+- **Ironic**
+- **Masakari**
+- **Octavia**
+- **Watcher**
+- **Manila**
+- **Barbican**
+- **AODH**
+- **Ceilometer**
+- **Gnocchi**
 
 ## Contributing
 
