@@ -37,39 +37,17 @@ prepare: |
   PACKAGES="
     build-essential \
     crudini \
-    glance-api \
-    heat-api \
-    heat-api-cfn \
-    heat-engine \
-    keystone \
     libapt-pkg-dev \
-    mysql-server \
-    neutron-ovn-metadata-agent \
-    neutron-server \
-    nova-api \
-    nova-compute \
-    nova-conductor \
-    nova-scheduler \
-    nova-spiceproxy \
-    openvswitch-switch \
-    ovn-central \
-    ovn-host \
-    placement-api \
     python3-all-dev \
     python3-apt \
     python3-networkx \
-    python3-openstackclient \
-    rabbitmq-server \
-    spice-html5"
+    python3-openstackclient"
   if [ "${FEATURE_ENABLE_CEPH:-false}" != false ]; then
     PACKAGES+="
       ceph-mgr \
       ceph-mon \
       ceph-osd \
-      ceph-volume \
-      cinder-api \
-      cinder-scheduler \
-      cinder-volume"
+      ceph-volume"
   fi
   if [ "${TEMPEST_SOURCE:-apt}" = apt ]; then
     PACKAGES+="
@@ -87,6 +65,11 @@ prepare: |
   fi
   apt-get update
   apt-get -y install $PACKAGES
+
+  # Install packages declared by all modules.
+  pushd $SPREAD_PATH/src
+  apt install -y $(python3 -m regress_stack packages)
+  popd
 
   # NOTE(freyes): workaround for http://pad.lv/2130370
   if [ ! -f /usr/bin/keystone-wsgi-public ]; then
