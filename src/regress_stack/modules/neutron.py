@@ -31,7 +31,7 @@ EXTERNAL_NETWORK = "external-network"
 NEUTRON_FLAMINGO_VERSION = "2:26.0.0-0ubuntu1~cloud0"
 
 
-def determine_packages() -> list[str]:
+def determine_packages(no_tempest: bool = False) -> list[str]:
     """Determine the packages to install for this module."""
 
     packages = copy.deepcopy(_BASE_PACKAGES)
