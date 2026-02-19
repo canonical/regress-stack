@@ -81,7 +81,7 @@ jobs:
       TEMPEST_SOURCE: "${{ inputs.tempest_source }}"
       TEST_EXCLUDE_REGEXES: "${{ inputs.test_exclude_regexes }}"
       TEST_INCLUDE_REGEXES: "${{ inputs.test_include_regexes }}"
-    runs-on: [self-hosted, linux, X64, large, noble]
+    runs-on: [self-hosted, linux, X64, xlarge, noble]
     steps:
     - name: Checkout repository
       uses: actions/checkout@v5
@@ -147,7 +147,10 @@ jobs:
         APT_PPAS="${{ matrix.ppa }}"
         export APT_PPAS=${APT_PPAS:-false}
         export FEATURE_ENABLE_CEPH="${{ matrix.ceph }}"
-        PLAN=c6-m24 ./boot.sh
+        # Running in a VM with 16 cores and 64GiB of memory, leaving 2 cores and
+        # 8GiB of ram to the host. The VM launched by spread will be L2 guest,
+        # hence the need to assign a lot of resources.
+        PLAN=c14-m56 ./boot.sh
 
         mkdir /tmp/artifacts
         cp spread.yaml /tmp/artifacts/
