@@ -66,6 +66,9 @@ prepare: |
   apt-get update
   apt-get -y install $PACKAGES
 
+  # Install regress-stack dependencies
+  apt-get install -yq python3-pyroute2
+
   # Install packages declared by all modules.
   pushd $SPREAD_PATH/src
   apt install -y $(python3 -m regress_stack packages)
