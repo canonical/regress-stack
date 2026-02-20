@@ -64,7 +64,9 @@ prepare: |
     chown -R $LOGNAME:$LOGNAME $SPREAD_PATH
   fi
   apt-get update
-  apt-get -y install $PACKAGES
+
+  (set +o pipefail; apt-get -y install $PACKAGES |& tee packages.log || (grep -Pzo '(?s)rabbitmq-server\nneedrestart is being skipped since dpkg has failed' packages.log && systemctl status rabbitmq-server && cat /var/log/rabbitmq/*.log && systemctl restart rabbitmq-server && dpkg-reconfigure rabbitmq-server))
+  apt-get -f install
 
   # Install regress-stack dependencies
   apt-get install -yq python3-pyroute2
