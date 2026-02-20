@@ -4,10 +4,12 @@
 import click
 import logging
 import os
+import json
 import pathlib
 import subprocess
 
 import regress_stack.modules
+from regress_stack.core import apt as core_apt
 from regress_stack.core import utils
 from regress_stack.core.modules import get_execution_order
 from regress_stack.modules import keystone
@@ -27,14 +29,33 @@ LOG = logging.getLogger(__name__)
     else 1,
     help="The number of workers to use, defaults to 1. The value 'auto' sets concurrency to number of cpus / 3.",
 )
+@click.option(
+    "--retry-failed",
+    type=int,
+    default=0,
+    help="Number of times to retry failed tests, defaults to 0 (no retries).",
+)
 @utils.measure_time
-def test(concurrency):
+def test(concurrency, retry_failed):
     """Run the regression tests using Tempest."""
+
+    # NOTE(freyes): use PPA to fix http://pad.lv/2141604 if needed.
+    if core_apt.PkgVersionCompare("python3-tempestconf") < "3.5.1-1ubuntu1~cloud0":
+        core_apt.add_ppa("ppa:freyes/lp2141604")
+        utils.run("apt", ["install", "-yq", "--only-upgrade", "python3-tempestconf"])
     env = os.environ.copy()
     env.update(keystone.auth_env())
     dir_name = "mycloud01"
     release = utils.release()
-    utils.run("tempest", ["init", dir_name])
+    workspaces = json.loads(
+        utils.run("tempest", ["workspace", "list", "--format", "json"])
+    )
+    workspaces = [ws["Name"] for ws in workspaces]
+    if dir_name in workspaces:
+        LOG.info("Tempest workspace %s already exists, skipping init", dir_name)
+    else:
+        utils.run("tempest", ["init", dir_name])
+
     utils.run(
         "discover-tempest-config",
         [
@@ -114,9 +135,28 @@ def test(concurrency):
         dir_name,
     )
 
-    try:
-        with utils.banner("Fetching failing tests"):
-            utils.run("stestr", ["failing", "--list"], cwd=dir_name)
-    except subprocess.CalledProcessError:
-        collect_logs()
-        raise
+    retries = 0
+    successful_run = False
+    while retry_failed >= retries and not successful_run:
+        try:
+            with utils.banner("Fetching failing tests"):
+                utils.run("stestr", ["failing", "--list"], cwd=dir_name)
+                successful_run = True
+        except subprocess.CalledProcessError:
+            retries += 1
+            # Collect logs after the last retry to avoid collecting logs
+            # multiple times in case of multiple retries.
+            if retries > retry_failed:
+                collect_logs()
+                raise
+            else:
+                LOG.warning(
+                    "Failed to fetch failing tests, retrying (%d/%d)",
+                    retries,
+                    retry_failed,
+                )
+                utils.system(
+                    f"stestr run --failing --concurrency {concurrency}",
+                    env,
+                    dir_name,
+                )

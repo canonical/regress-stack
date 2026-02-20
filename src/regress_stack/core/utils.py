@@ -138,6 +138,11 @@ def enable_service(service: str):
     run("systemctl", ["enable", service])
 
 
+def mask_server(service: str):
+    """Mask a systemd service."""
+    run("systemctl", ["mask", service])
+
+
 @functools.lru_cache()
 def fqdn() -> str:
     return run("hostname", ["-f"]).strip()

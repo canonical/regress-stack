@@ -8,8 +8,13 @@ from regress_stack.core.modules import get_execution_order
 
 
 @click.command("packages")
+@click.help_option(
+    "--no-tempest",
+    is_flag=True,
+    help="Do not include tempest related packages, this is useful when using the tempest snap.",
+)
 @click.argument("target", required=False)
-def packages(target=None):
+def packages(target=None, no_tempest=False):
     """List packages needed to reach the specified target.
 
     If no target is specified, lists packages for all modules.
@@ -17,6 +22,7 @@ def packages(target=None):
 
     Examples:
         regress-stack packages nova
+        regress-stack packages --no-tempest nova
         apt install $(regress-stack packages nova)
     """
     try:
@@ -28,7 +34,13 @@ def packages(target=None):
         # Collect all packages
         all_packages = []
         for module_comp in execution_order:
-            packages_list = getattr(module_comp.module, "PACKAGES", [])
+            if hasattr(module_comp.module, "determine_packages"):
+                packages_list = module_comp.module.determine_packages(
+                    no_tempest=no_tempest
+                )
+            else:
+                packages_list = getattr(module_comp.module, "PACKAGES", [])
+
             all_packages.extend(packages_list)
 
         # Remove duplicates while preserving order

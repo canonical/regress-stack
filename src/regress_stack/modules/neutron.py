@@ -1,11 +1,13 @@
 # Copyright 2025 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+import copy
 import functools
 import ipaddress
 import logging
 import time
 
+from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import keystone, mysql, ovn, rabbitmq
 from regress_stack.modules import utils as module_utils
@@ -13,7 +15,8 @@ from regress_stack.modules import utils as module_utils
 LOG = logging.getLogger(__name__)
 
 DEPENDENCIES = {keystone, mysql, ovn, rabbitmq}
-PACKAGES = ["neutron-server", "neutron-ovn-metadata-agent"]
+_BASE_PACKAGES = ["neutron-ovn-metadata-agent"]
+
 LOGS = ["/var/log/neutron/"]
 
 CONF = "/etc/neutron/neutron.conf"
@@ -25,8 +28,29 @@ METADATA_SECRET = "bonjour"
 
 EXTERNAL_NETWORK = "external-network"
 
+NEUTRON_FLAMINGO_VERSION = "2:26.0.0-0ubuntu1~cloud0"
+
+
+def determine_packages(no_tempest: bool = False) -> list[str]:
+    """Determine the packages to install for this module."""
+
+    packages = copy.deepcopy(_BASE_PACKAGES)
+    if (
+        core_apt.PkgVersionCompare("python3-neutron", candidate=True)
+        >= NEUTRON_FLAMINGO_VERSION
+    ):
+        packages += ["neutron-rpc-server", "neutron-api", "neutron-periodic-workers"]
+    else:
+        packages += ["neutron-server"]
+
+    return packages
+
 
 def setup():
+    # mask neutron-server if running flamingo.
+    if core_apt.PkgVersionCompare("python3-neutron") >= NEUTRON_FLAMINGO_VERSION:
+        core_utils.mask_server("neutron-server")
+
     db_user, db_pass = mysql.ensure_service("neutron")
     rabbit_user, rabbit_pass = rabbitmq.ensure_service("neutron")
     username, password = keystone.ensure_service_account("neutron", "network", URL)
@@ -112,8 +136,24 @@ def setup():
         ["--config-file", CONF, "--config-file", ML2_CONF, "upgrade", "head"],
         user="neutron",
     )
-    core_utils.restart_service("neutron-server")
+
+    # OpenStack 2025.2 (Flamingo) introduced the neutron-rpc-server daemon and
+    # deprecated neutron-server.
+    if core_apt.PkgVersionCompare("python3-neutron") >= NEUTRON_FLAMINGO_VERSION:
+        neutron_daemons = [
+            "apache2",  # neutron-api runs under apache2 as a WSGI application
+            "neutron-rpc-server",
+            "neutron-periodic-workers",
+        ]
+    else:
+        neutron_daemons = [
+            "neutron-server",
+        ]
+
+    for _daemon in neutron_daemons:
+        core_utils.restart_service(_daemon)
     core_utils.restart_service("neutron-ovn-metadata-agent")
+
     # wait for neutron-server to accept http connections
     for _ in range(10):
         try:
@@ -121,7 +161,7 @@ def setup():
             break
         except Exception as e:
             if "Connection refused" in str(e):
-                LOG.debug("Waiting for neutron-server to start...")
+                LOG.info("Waiting for neutron-server to start...")
                 time.sleep(5)
                 continue
             raise e
