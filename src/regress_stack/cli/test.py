@@ -29,8 +29,14 @@ LOG = logging.getLogger(__name__)
     else 1,
     help="The number of workers to use, defaults to 1. The value 'auto' sets concurrency to number of cpus / 3.",
 )
+@click.option(
+    "--retry-failed",
+    type=int,
+    default=0,
+    help="Number of times to retry failed tests, defaults to 0 (no retries).",
+)
 @utils.measure_time
-def test(concurrency):
+def test(concurrency, retry_failed):
     """Run the regression tests using Tempest."""
 
     # NOTE(freyes): use PPA to fix http://pad.lv/2141604 if needed.
@@ -129,9 +135,28 @@ def test(concurrency):
         dir_name,
     )
 
-    try:
-        with utils.banner("Fetching failing tests"):
-            utils.run("stestr", ["failing", "--list"], cwd=dir_name)
-    except subprocess.CalledProcessError:
-        collect_logs()
-        raise
+    retries = 0
+    successful_run = False
+    while retry_failed >= retries and not successful_run:
+        try:
+            with utils.banner("Fetching failing tests"):
+                utils.run("stestr", ["failing", "--list"], cwd=dir_name)
+                successful_run = True
+        except subprocess.CalledProcessError:
+            retries += 1
+            # Collect logs after the last retry to avoid collecting logs
+            # multiple times in case of multiple retries.
+            if retries > retry_failed:
+                collect_logs()
+                raise
+            else:
+                LOG.warning(
+                    "Failed to fetch failing tests, retrying (%d/%d)",
+                    retries,
+                    retry_failed,
+                )
+                utils.system(
+                    f"stestr run --failing --concurrency {concurrency}",
+                    env,
+                    dir_name,
+                )

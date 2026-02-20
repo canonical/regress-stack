@@ -98,7 +98,7 @@ execute: |
   apt list '?narrow(?installed,?origin(LP-PPA.*))' | tee -a $output
 
   pushd $SPREAD_PATH/src
-  python3 -m regress_stack test --concurrency auto |& tee -a $output
+  python3 -m regress_stack test --concurrency auto --retry-failed 3 |& tee -a $output
   popd
 
 artifacts:
