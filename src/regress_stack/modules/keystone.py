@@ -26,10 +26,33 @@ ADMIN_PASSWORD = "changeme"
 OS_AUTH_URL = f"http://{core_utils.my_ip()}:5000/v3/"
 SERVICE_DOMAIN = "service"
 SERVICE_PROJECT = "service"
+RESOURCE_PKG = "regress_stack.resources"
+PUBLIC_WSGI = pathlib.Path("/usr/bin/keystone-wsgi-public")
+ADMIN_WSGI = pathlib.Path("/usr/bin/keystone-wsgi-admin")
+
+
+def _ensure_wsgi_scripts() -> None:
+    for resource, destination in (
+        ("keystone-wsgi-public", PUBLIC_WSGI),
+        ("keystone-wsgi-admin", ADMIN_WSGI),
+    ):
+        if destination.exists():
+            continue
+        core_utils.warn_workaround(
+            "keystone packaging",
+            f"{destination.name} is missing; installing a local shim until the Ubuntu package is fixed",
+        )
+        core_utils.write_resource(
+            RESOURCE_PKG,
+            resource,
+            destination,
+            mode=0o755,
+        )
 
 
 def setup():
     username, password = mysql.ensure_service("keystone")
+    _ensure_wsgi_scripts()
     core_utils.run(
         "sed",
         [

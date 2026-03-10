@@ -73,16 +73,12 @@ prepare: |
 
   # Install packages declared by all modules.
   pushd $SPREAD_PATH/src
-  apt install -y $(python3 -m regress_stack packages)
+  if [ "${TEMPEST_SOURCE:-apt}" = snap ]; then
+    apt install -y $(python3 -m regress_stack packages --no-tempest)
+  else
+    apt install -y $(python3 -m regress_stack packages)
+  fi
   popd
-
-  # NOTE(freyes): workaround for http://pad.lv/2130370
-  if [ ! -f /usr/bin/keystone-wsgi-public ]; then
-    cp /root/regress-stack/files/keystone-wsgi-public /usr/bin/keystone-wsgi-public
-  fi
-  if [ ! -f /usr/bin/keystone-wsgi-admin ]; then
-    cp /root/regress-stack/files/keystone-wsgi-admin /usr/bin/keystone-wsgi-admin
-  fi
 
   output=$(realpath ./prepare-output.txt)
 
