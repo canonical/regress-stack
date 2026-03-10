@@ -1,6 +1,9 @@
 # Copyright 2025 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+import pathlib
+import subprocess
+
 from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import ceph, keystone, mysql, rabbitmq
@@ -16,6 +19,11 @@ SERVICE = "cinder"
 SERVICE_TYPE = "volumev3"
 VOLUME_POOL = "volumes"
 VOLUME_USER = VOLUME_POOL
+CINDER_ROOTWRAP = pathlib.Path("/usr/bin/cinder-rootwrap")
+CINDER_SUDOERS = pathlib.Path("/etc/sudoers.d/regress-stack-cinder-rootwrap")
+CINDER_PRIVSEP_HELPER = (
+    "sudo /usr/bin/cinder-rootwrap /etc/cinder/rootwrap.conf privsep-helper"
+)
 
 
 def installed() -> bool:
@@ -70,7 +78,45 @@ def setup():
             },
         ),
     )
+    _ensure_questing_compat()
     core_utils.sudo("cinder-manage", ["db", "sync"], SERVICE)
     core_utils.restart_apache()
     core_utils.restart_service("cinder-scheduler")
     core_utils.restart_service("cinder-volume")
+
+
+def _ensure_questing_compat() -> None:
+    if not _using_sudo_rs():
+        return
+    _ensure_sudo_rs_rootwrap()
+    module_utils.cfg_set(
+        CONF,
+        ("cinder_sys_admin", "helper_command", CINDER_PRIVSEP_HELPER),
+    )
+
+
+def _using_sudo_rs() -> bool:
+    result = subprocess.run(
+        ["sudo", "-V"],
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return "sudo-rs" in f"{result.stdout}\n{result.stderr}"
+
+
+def _ensure_sudo_rs_rootwrap() -> None:
+    if not CINDER_ROOTWRAP.exists():
+        return
+    contents = "cinder ALL = (root) NOPASSWD: /usr/bin/cinder-rootwrap\n"
+    current = CINDER_SUDOERS.read_text() if CINDER_SUDOERS.exists() else None
+    if current == contents:
+        return
+    core_utils.warn_workaround(
+        "cinder + sudo-rs",
+        "installing a local sudoers override for cinder-rootwrap until the Ubuntu package defaults are fixed",
+    )
+    CINDER_SUDOERS.write_text(contents)
+    CINDER_SUDOERS.chmod(0o440)
+    core_utils.run("visudo", ["-cf", str(CINDER_SUDOERS)])
