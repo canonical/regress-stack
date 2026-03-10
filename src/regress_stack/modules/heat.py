@@ -23,7 +23,7 @@ SERVICE = "heat"
 SERVICE_CFN = "heat-cfn"
 SERVICE_TYPE = "orchestration"
 SERVICE_TYPE_CFN = "cloudformation"
-HEAT_FLAMINGO_VERSION = "1:25.0.0~rc1-0ubuntu3"
+HEAT_APACHE_API_VERSION = "25.0.0"
 HEAT_STACK_ADMIN = "heat_admin"
 HEAT_STACK_ADMIN_PASSWORD = "changeme"
 
@@ -101,7 +101,10 @@ def setup():
     )
     core_utils.sudo("heat-manage", ["db_sync"], user=SERVICE)
     heat_daemons = ["heat-api", "heat-api-cfn", "heat-engine"]
-    if core_apt.PkgVersionCompare("python3-heat") >= HEAT_FLAMINGO_VERSION:
+    if (
+        core_apt.PkgVersionCompare("python3-heat", upstream=True)
+        >= HEAT_APACHE_API_VERSION
+    ):
         heat_daemons.remove("heat-api")
         heat_daemons.remove("heat-api-cfn")
         # heat-api and heat-api-cfn run as WSGI apps under apache2.

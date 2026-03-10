@@ -32,7 +32,7 @@ def packages(target=None, no_tempest=False):
         )
 
         # Collect all packages
-        all_packages = []
+        all_packages = regress_stack.modules.determine_packages(no_tempest=no_tempest)
         for module_comp in execution_order:
             if hasattr(module_comp.module, "determine_packages"):
                 packages_list = module_comp.module.determine_packages(
