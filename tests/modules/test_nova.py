@@ -78,13 +78,21 @@ def test_ensure_metadata_site_when_missing(tmp_path, monkeypatch):
 
 def test_ensure_metadata_site_is_noop_when_valid_site_exists(tmp_path, monkeypatch):
     sites_enabled = tmp_path / "sites-enabled"
+    sites_available = tmp_path / "sites-available"
     sites_enabled.mkdir()
+    sites_available.mkdir()
+    site_path = sites_available / "regress-stack-nova-metadata.conf"
     (sites_enabled / "nova-metadata.conf").write_text(
-        "Listen 8775\nWSGIScriptAlias / /usr/bin/nova-metadata-wsgi\n"
+        "Listen 8775\n"
+        "WSGIScriptAlias / /usr/bin/nova-metadata-wsgi\n"
+        "WSGIDaemonProcess nova-metadata processes=1 threads=1 user=nova group=nova display-name=%{GROUP}\n"
+        "WSGIProcessGroup nova-metadata\n"
     )
     run_calls = []
 
     monkeypatch.setattr(nova, "APACHE_SITES_ENABLED", sites_enabled)
+    monkeypatch.setattr(nova, "NOVA_METADATA_SITE", site_path)
+    monkeypatch.setattr(nova, "NOVA_METADATA_SITE_NAME", site_path.name)
     monkeypatch.setattr(
         nova.core_utils,
         "run",
@@ -100,6 +108,7 @@ def test_ensure_metadata_site_rewrites_stale_managed_site(tmp_path, monkeypatch)
     sites_enabled = tmp_path / "sites-enabled"
     sites_available = tmp_path / "sites-available"
     sites_enabled.mkdir()
+    sites_available.mkdir()
     site_path = sites_available / "regress-stack-nova-metadata.conf"
     site_path.write_text(
         "Listen 8775\n"

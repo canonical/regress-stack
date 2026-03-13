@@ -245,7 +245,10 @@ def test_get_execution_order_without_filtering():
     )
     packages = []
     for module_comp in execution_order:
-        packages.extend(getattr(module_comp.module, "PACKAGES", []))
+        if hasattr(module_comp.module, "determine_packages"):
+            packages.extend(module_comp.module.determine_packages())
+        else:
+            packages.extend(getattr(module_comp.module, "PACKAGES", []))
 
     # Should include nova packages
     assert "nova-api" in packages
@@ -266,7 +269,10 @@ def test_get_execution_order_utils_without_filtering():
     )
     packages = []
     for module_comp in execution_order:
-        packages.extend(getattr(module_comp.module, "PACKAGES", []))
+        if hasattr(module_comp.module, "determine_packages"):
+            packages.extend(module_comp.module.determine_packages())
+        else:
+            packages.extend(getattr(module_comp.module, "PACKAGES", []))
 
     assert packages == ["crudini"]
 
@@ -281,7 +287,10 @@ def test_get_execution_order_all_without_filtering():
     )
     packages = []
     for module_comp in execution_order:
-        packages.extend(getattr(module_comp.module, "PACKAGES", []))
+        if hasattr(module_comp.module, "determine_packages"):
+            packages.extend(module_comp.module.determine_packages())
+        else:
+            packages.extend(getattr(module_comp.module, "PACKAGES", []))
 
     # Should include packages from all modules
     assert "nova-api" in packages

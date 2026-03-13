@@ -8,7 +8,7 @@ from regress_stack.core.modules import get_execution_order
 
 
 @click.command("packages")
-@click.help_option(
+@click.option(
     "--no-tempest",
     is_flag=True,
     help="Do not include tempest related packages, this is useful when using the tempest snap.",
