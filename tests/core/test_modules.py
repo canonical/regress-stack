@@ -1,7 +1,7 @@
 # Copyright 2025 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, patch
 
 import networkx as nx
 import pytest
@@ -11,7 +11,16 @@ from regress_stack.core.modules import ModuleComp, build_dependency_graph, filte
 
 @pytest.fixture
 def mock_modules():
-    mock_mod1 = Mock()
+    mock_mod_spec = [
+        "name",
+        "module_finder",
+        "__name__",
+        "__file__",
+        "DEPENDENCIES",
+        "OPTIONAL_DEPENDENCIES",
+        "PACKAGES",
+    ]
+    mock_mod1 = MagicMock(spec=mock_mod_spec)
     mock_mod1.name = "mod1"
     mock_mod1.__name__ = "regress_stack.modules.mod1"
     mock_mod1.__file__ = "/fake/path/mod1.py"
@@ -19,7 +28,7 @@ def mock_modules():
     mock_mod1.OPTIONAL_DEPENDENCIES = set()
     mock_mod1.PACKAGES = ["pkg1"]
 
-    mock_mod2 = Mock()
+    mock_mod2 = MagicMock(spec=mock_mod_spec)
     mock_mod2.name = "mod2"
     mock_mod2.__name__ = "regress_stack.modules.mod2"
     mock_mod2.__file__ = "/fake/path/mod2.py"
@@ -27,7 +36,7 @@ def mock_modules():
     mock_mod2.OPTIONAL_DEPENDENCIES = set()
     mock_mod2.PACKAGES = ["pkg2"]
 
-    mock_mod3 = Mock()
+    mock_mod3 = MagicMock(spec=mock_mod_spec)
     mock_mod3.name = "mod3"
     mock_mod3.__name__ = "regress_stack.modules.mod3"
     mock_mod3.__file__ = "/fake/path/mod3.py"
@@ -35,7 +44,7 @@ def mock_modules():
     mock_mod3.OPTIONAL_DEPENDENCIES = {mock_mod1}
     mock_mod3.PACKAGES = ["pkg3"]
 
-    mock_modules_mod = Mock()
+    mock_modules_mod = MagicMock(spec=mock_mod_spec)
     mock_modules_mod.__path__ = ["/fake/path"]
     mock_modules_mod.__package__ = "regress_stack.modules"
     mock_modules_mod.mod1 = mock_mod1
@@ -236,7 +245,10 @@ def test_get_execution_order_without_filtering():
     )
     packages = []
     for module_comp in execution_order:
-        packages.extend(getattr(module_comp.module, "PACKAGES", []))
+        if hasattr(module_comp.module, "determine_packages"):
+            packages.extend(module_comp.module.determine_packages())
+        else:
+            packages.extend(getattr(module_comp.module, "PACKAGES", []))
 
     # Should include nova packages
     assert "nova-api" in packages
@@ -257,7 +269,10 @@ def test_get_execution_order_utils_without_filtering():
     )
     packages = []
     for module_comp in execution_order:
-        packages.extend(getattr(module_comp.module, "PACKAGES", []))
+        if hasattr(module_comp.module, "determine_packages"):
+            packages.extend(module_comp.module.determine_packages())
+        else:
+            packages.extend(getattr(module_comp.module, "PACKAGES", []))
 
     assert packages == ["crudini"]
 
@@ -272,7 +287,10 @@ def test_get_execution_order_all_without_filtering():
     )
     packages = []
     for module_comp in execution_order:
-        packages.extend(getattr(module_comp.module, "PACKAGES", []))
+        if hasattr(module_comp.module, "determine_packages"):
+            packages.extend(module_comp.module.determine_packages())
+        else:
+            packages.extend(getattr(module_comp.module, "PACKAGES", []))
 
     # Should include packages from all modules
     assert "nova-api" in packages

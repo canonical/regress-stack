@@ -3,6 +3,7 @@
 
 import contextlib
 import functools
+import importlib.resources
 import ipaddress
 import logging
 import math
@@ -30,6 +31,12 @@ def measure(section: str):
     finally:
         end = time.time()
         LOG.info("%s: %.2fs", section, end - start)
+
+
+def warn_workaround(subject: str, detail: str) -> None:
+    msg = f"temporary local workaround for {subject}: {detail}"
+    print(f"WARNING: {msg}")
+    LOG.warning(msg)
 
 
 def print_ascii_banner(msg: str):
@@ -138,6 +145,11 @@ def enable_service(service: str):
     run("systemctl", ["enable", service])
 
 
+def mask_server(service: str):
+    """Mask a systemd service."""
+    run("systemctl", ["mask", service])
+
+
 @functools.lru_cache()
 def fqdn() -> str:
     return run("hostname", ["-f"]).strip()
@@ -221,6 +233,23 @@ def is_setup_done(name: str) -> bool:
     """Check if task is done."""
     done_file = REGRESS_STACK_DIR / (name + ".setup")
     return done_file.exists()
+
+
+def write_resource(
+    package: str,
+    resource: str,
+    destination: pathlib.Path,
+    mode: int = 0o644,
+    overwrite: bool = False,
+) -> bool:
+    """Write a packaged resource to destination."""
+    if destination.exists() and not overwrite:
+        return False
+    data = importlib.resources.files(package).joinpath(resource).read_text()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(data)
+    destination.chmod(mode)
+    return True
 
 
 def concurrency_cb(arg: str) -> int:

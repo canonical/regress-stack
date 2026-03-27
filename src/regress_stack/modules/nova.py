@@ -9,6 +9,7 @@ import stat
 import subprocess
 import time
 
+from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import (
     ceph,
@@ -34,7 +35,7 @@ DEPENDENCIES = {
     placement,
 }
 OPTIONAL_DEPENDENCIES = {ceph, cinder}
-PACKAGES = [
+BASE_PACKAGES = [
     "nova-api",
     "nova-conductor",
     "nova-scheduler",
@@ -49,6 +50,23 @@ URL = f"http://{core_utils.my_ip()}:8774/v2.1"
 NOVA_CEPH_UUID = pathlib.Path("/etc/nova/ceph_uuid")
 SERVICE = "nova"
 SERVICE_TYPE = "compute"
+
+NOVA_APACHE_API_VERSION = "32.0.0"
+NOVA_METADATA_SITE = pathlib.Path(
+    "/etc/apache2/sites-available/regress-stack-nova-metadata.conf"
+)
+NOVA_METADATA_SITE_NAME = NOVA_METADATA_SITE.name
+NOVA_SUDOERS = pathlib.Path("/etc/sudoers.d/regress-stack-nova-rootwrap")
+NOVA_ROOTWRAP = pathlib.Path("/usr/bin/nova-rootwrap")
+APACHE_SITES_ENABLED = pathlib.Path("/etc/apache2/sites-enabled")
+NOVA_METADATA_PROCESS_GROUP = "nova-metadata"
+NOVA_PRIVSEP_HELPER = (
+    "sudo /usr/bin/nova-rootwrap /etc/nova/rootwrap.conf privsep-helper"
+)
+
+
+def determine_packages(no_tempest: bool = False) -> list[str]:
+    return list(BASE_PACKAGES)
 
 
 def setup():
@@ -124,6 +142,7 @@ def setup():
         ),
         ("os_vif_ovs", "ovsdb_connection", ovn.OVSDB_CONNECTION),
     )
+    _ensure_questing_compat()
 
     if ceph.installed() and cinder.installed():
         pool = ceph.ensure_pool(cinder.VOLUME_POOL)
@@ -166,10 +185,17 @@ def setup():
             "nova-manage", ["cell_v2", "create_cell", "--name=cell1"], user="nova"
         )
     core_utils.sudo("nova-manage", ["db", "sync"], user="nova")
-    core_utils.restart_service("nova-api")
-    core_utils.restart_service("nova-scheduler")
-    core_utils.restart_service("nova-conductor")
-    core_utils.restart_service("nova-compute")
+
+    nova_daemons = ["nova-api", "nova-scheduler", "nova-conductor", "nova-compute"]
+
+    if _api_runs_under_apache():
+        nova_daemons.remove("nova-api")
+        # nova-api runs under apache2 as a WSGI application
+        nova_daemons.insert(0, "apache2")
+
+    for _daemon in nova_daemons:
+        core_utils.restart_service(_daemon)
+
     # Give some time for nova-compute to be up before discovering hosts
     for _ in range(25):
         output = core_utils.sudo(
@@ -181,6 +207,106 @@ def setup():
         if core_utils.fqdn() in output:
             break
         time.sleep(5)
+
+
+def _api_runs_under_apache() -> bool:
+    return (
+        core_apt.PkgVersionCompare("python3-nova", upstream=True)
+        >= NOVA_APACHE_API_VERSION
+    )
+
+
+def _ensure_questing_compat() -> None:
+    if _using_sudo_rs():
+        _ensure_sudo_rs_rootwrap()
+        module_utils.cfg_set(
+            CONF,
+            ("nova_sys_admin", "helper_command", NOVA_PRIVSEP_HELPER),
+            ("vif_plug_ovs_privileged", "helper_command", NOVA_PRIVSEP_HELPER),
+        )
+    if _api_runs_under_apache():
+        _ensure_metadata_site()
+
+
+def _using_sudo_rs() -> bool:
+    result = subprocess.run(
+        ["sudo", "-V"],
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return "sudo-rs" in f"{result.stdout}\n{result.stderr}"
+
+
+def _ensure_sudo_rs_rootwrap() -> None:
+    if not NOVA_ROOTWRAP.exists():
+        return
+    contents = "nova ALL = (root) NOPASSWD: /usr/bin/nova-rootwrap\n"
+    current = NOVA_SUDOERS.read_text() if NOVA_SUDOERS.exists() else None
+    if current == contents:
+        return
+    core_utils.warn_workaround(
+        "nova + sudo-rs",
+        "installing a local sudoers override for nova-rootwrap until the Ubuntu package defaults are fixed",
+    )
+    NOVA_SUDOERS.write_text(contents)
+    NOVA_SUDOERS.chmod(0o440)
+    core_utils.run("visudo", ["-cf", str(NOVA_SUDOERS)])
+
+
+def _enabled_apache_sites() -> list[pathlib.Path]:
+    return sorted(APACHE_SITES_ENABLED.glob("*.conf"))
+
+
+def _site_has_metadata(site_path: pathlib.Path) -> bool:
+    if not site_path.exists():
+        return False
+    content = site_path.read_text()
+    return all(
+        marker in content
+        for marker in (
+            "Listen 8775",
+            "/usr/bin/nova-metadata-wsgi",
+            f"WSGIDaemonProcess {NOVA_METADATA_PROCESS_GROUP}",
+            f"WSGIProcessGroup {NOVA_METADATA_PROCESS_GROUP}",
+        )
+    )
+
+
+def _site_has_broken_metadata(site_path: pathlib.Path) -> bool:
+    if not site_path.exists():
+        return False
+    content = site_path.read_text()
+    return "Listen 8775" in content and "nova-api-metadata-wsgi" in content
+
+
+def _ensure_metadata_site() -> None:
+    for site in _enabled_apache_sites():
+        if _site_has_metadata(site):
+            return
+
+    broken_site = APACHE_SITES_ENABLED / "nova-api-metadata.conf"
+    if _site_has_broken_metadata(broken_site):
+        core_utils.warn_workaround(
+            "nova metadata packaging",
+            "disabling the broken nova-api-metadata Apache site and enabling a local metadata vhost until the Ubuntu package is fixed",
+        )
+        core_utils.run("a2dissite", [broken_site.name])
+    elif not NOVA_METADATA_SITE.exists():
+        core_utils.warn_workaround(
+            "nova metadata packaging",
+            "installing a local metadata Apache vhost until the Ubuntu package split is fixed",
+        )
+
+    core_utils.write_resource(
+        "regress_stack.resources",
+        "nova-metadata.conf",
+        NOVA_METADATA_SITE,
+        overwrite=True,
+    )
+    if not (APACHE_SITES_ENABLED / NOVA_METADATA_SITE_NAME).exists():
+        core_utils.run("a2ensite", [NOVA_METADATA_SITE_NAME])
 
 
 def virt_type() -> str:

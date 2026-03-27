@@ -4,6 +4,7 @@
 import logging
 import pathlib
 
+from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import keystone, mysql, neutron, nova, rabbitmq
 from regress_stack.modules import utils as module_utils
@@ -22,6 +23,7 @@ SERVICE = "heat"
 SERVICE_CFN = "heat-cfn"
 SERVICE_TYPE = "orchestration"
 SERVICE_TYPE_CFN = "cloudformation"
+HEAT_APACHE_API_VERSION = "25.0.0"
 HEAT_STACK_ADMIN = "heat_admin"
 HEAT_STACK_ADMIN_PASSWORD = "changeme"
 
@@ -98,9 +100,18 @@ def setup():
         ),
     )
     core_utils.sudo("heat-manage", ["db_sync"], user=SERVICE)
-    core_utils.restart_service("heat-api")
-    core_utils.restart_service("heat-api-cfn")
-    core_utils.restart_service("heat-engine")
+    heat_daemons = ["heat-api", "heat-api-cfn", "heat-engine"]
+    if (
+        core_apt.PkgVersionCompare("python3-heat", upstream=True)
+        >= HEAT_APACHE_API_VERSION
+    ):
+        heat_daemons.remove("heat-api")
+        heat_daemons.remove("heat-api-cfn")
+        # heat-api and heat-api-cfn run as WSGI apps under apache2.
+        heat_daemons.insert(0, "apache2")
+
+    for _daemon in heat_daemons:
+        core_utils.restart_service(_daemon)
 
 
 def configure_tempest(tempest_conf: pathlib.Path):

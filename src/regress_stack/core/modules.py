@@ -36,7 +36,10 @@ class ModuleInfo:
 
     def __init__(self, name: str, module: types.ModuleType):
         self.name = name.rsplit(".")[-1]
-        self.packages = getattr(module, "PACKAGES")
+        if hasattr(module, "determine_packages"):
+            self.packages = module.determine_packages()
+        else:
+            self.packages = getattr(module, "PACKAGES")
 
     def __str__(self):
         return f"{self.name} ({' '.join(self.packages)})"
@@ -96,9 +99,12 @@ def build_dependency_graph(modules_mod: types.ModuleType) -> nx.DiGraph:
         )
         # In case someone includes a dependency in both DEPENDENCIES and OPTIONAL_DEPENDENCIES
         dependencies = dependencies - optional_dependencies
-        graph.add_node(
-            mod, installed=apt.pkgs_installed(getattr(module_loaded, "PACKAGES", []))
-        )
+        if hasattr(module_loaded, "determine_packages"):
+            packages = module_loaded.determine_packages()
+        else:
+            packages = getattr(module_loaded, "PACKAGES", [])
+
+        graph.add_node(mod, installed=apt.pkgs_installed(packages))
         for dep in dependencies:
             graph.add_edge(ModuleComp(dep.__name__, dep), mod, optional=False)
         for dep in optional_dependencies:

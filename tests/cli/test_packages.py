@@ -23,6 +23,9 @@ def test_packages_command_nova():
 
     # Check that output contains expected packages
     output_packages = result.output.strip().split()
+    assert "python3-openstackclient" in output_packages
+    assert "python3-tempestconf" in output_packages
+    assert "tempest" in output_packages
     assert "nova-api" in output_packages
     assert "nova-conductor" in output_packages
     assert "mysql-server" in output_packages
@@ -36,9 +39,14 @@ def test_packages_command_utils():
     result = runner.invoke(packages, ["utils"])
     assert result.exit_code == 0
 
-    # Utils should only return crudini
+    # Utils should return top-level packages plus utils packages.
     output_packages = result.output.strip().split()
-    assert output_packages == ["crudini"]
+    assert output_packages == [
+        "python3-openstackclient",
+        "python3-tempestconf",
+        "tempest",
+        "crudini",
+    ]
 
 
 def test_packages_command_all():
@@ -79,3 +87,14 @@ def test_packages_command_output_format():
     assert "mysql-server" in output_packages
     assert "keystone" in output_packages
     assert "apache2" in output_packages
+
+
+def test_packages_command_no_tempest():
+    """Test that no-tempest excludes only the tempest package."""
+    runner = CliRunner()
+    result = runner.invoke(packages, ["--no-tempest", "nova"])
+    assert result.exit_code == 0
+
+    output_packages = result.output.strip().split()
+    assert "python3-tempestconf" in output_packages
+    assert "tempest" not in output_packages
