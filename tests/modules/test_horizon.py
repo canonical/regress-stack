@@ -1,6 +1,8 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+import pytest
+
 from regress_stack.modules import horizon
 
 
@@ -26,15 +28,28 @@ def test_setup_updates_local_settings_and_restarts_apache(tmp_path, monkeypatch)
         "OPENSTACK_HOST = 'controller'\nALLOWED_HOSTS = ['*']\nOTHER = 1\n"
     )
 
+    dbconf_path = tmp_path / "openstack-dashboard.conf"
+    dbconf_path.write_text(
+        "WSGIDaemonProcess horizon user=horizon group=horizon"
+        " processes=3 threads=10 display-name=%{GROUP}\n"
+    )
+
     restart_calls = []
+    run_calls = []
 
     monkeypatch.setattr(horizon, "LOCAL_SETTINGS", settings_path)
+    monkeypatch.setattr(horizon, "DASHBOARD_CONF", dbconf_path)
     monkeypatch.setattr(horizon.core_utils, "my_ip", lambda: "10.0.0.10")
     monkeypatch.setattr(horizon.core_utils, "fqdn", lambda: "node1.example")
     monkeypatch.setattr(
         horizon.core_utils,
         "restart_apache",
         lambda: restart_calls.append("apache2"),
+    )
+    monkeypatch.setattr(
+        horizon.core_utils,
+        "run",
+        lambda *args: run_calls.append(args),
     )
 
     horizon.setup()
@@ -46,6 +61,12 @@ def test_setup_updates_local_settings_and_restarts_apache(tmp_path, monkeypatch)
         in result
     )
     assert restart_calls == ["apache2"]
+    assert run_calls == [
+        (
+            "sed",
+            ["-i", "s|processes=3 threads=10|processes=1 threads=1|", str(dbconf_path)],
+        )
+    ]
 
 
 def test_setup_fails_when_settings_file_missing(tmp_path, monkeypatch):
@@ -53,9 +74,5 @@ def test_setup_fails_when_settings_file_missing(tmp_path, monkeypatch):
 
     monkeypatch.setattr(horizon, "LOCAL_SETTINGS", settings_path)
 
-    try:
+    with pytest.raises(RuntimeError, match="Expected Horizon settings file missing"):
         horizon.setup()
-    except RuntimeError as exc:
-        assert "Expected Horizon settings file missing" in str(exc)
-    else:
-        assert False, "expected RuntimeError"

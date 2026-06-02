@@ -15,9 +15,11 @@ PACKAGES = ["openstack-dashboard", "memcached"]
 LOGS = ["/var/log/apache2/"]
 
 LOCAL_SETTINGS = pathlib.Path("/etc/openstack-dashboard/local_settings.py")
+DASHBOARD_CONF = pathlib.Path("/etc/apache2/conf-available/openstack-dashboard.conf")
 
 
 def _upsert_setting(contents: str, key: str, value: str) -> str:
+    """Update or insert the value of a setting key in the given contents."""
     line = f"{key} = {value}"
     pattern = re.compile(rf"^\s*{re.escape(key)}\s*=.*$", re.MULTILINE)
     if pattern.search(contents):
@@ -64,5 +66,18 @@ def setup():
     if new_contents != contents:
         LOCAL_SETTINGS.write_text(new_contents)
         LOG.info("Updated Horizon settings in %s", LOCAL_SETTINGS)
+
+    if not DASHBOARD_CONF.exists():
+        raise RuntimeError(f"Horizon Apache config missing: {DASHBOARD_CONF}")
+
+    # Update the WSGI worker configuration
+    core_utils.run(
+        "sed",
+        [
+            "-i",
+            "s|processes=3 threads=10|processes=1 threads=1|",
+            str(DASHBOARD_CONF),
+        ],
+    )
 
     core_utils.restart_apache()

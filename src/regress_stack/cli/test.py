@@ -23,9 +23,9 @@ LOG = logging.getLogger(__name__)
     "--concurrency",
     type=str,
     default="1",
-    callback=lambda ctx, param, value: utils.concurrency_cb(value)
-    if value != "1"
-    else 1,
+    callback=lambda ctx, param, value: (
+        utils.concurrency_cb(value) if value != "1" else 1
+    ),
     help="The number of workers to use, defaults to 1. The value 'auto' sets concurrency to number of cpus / 3.",
 )
 @click.option(
