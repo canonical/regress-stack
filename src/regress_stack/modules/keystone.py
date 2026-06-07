@@ -74,15 +74,15 @@ def setup():
         ("database", "max_pool_size", "1"),
         ("token", "provider", "fernet"),
     )
-    # LP #2154897 mitigation
-    # REMOVE this block once resolute ships Python 3.14.5, which reverts the incremental
-    # GC change (cpython#142516) and eliminates the keystone leak.
-    module_utils.cfg_set(
-        CONF,
-        ("cache", "enabled", "true"),
-        ("cache", "backend", "dogpile.cache.memory"),
-        ("cache", "expiration_time", "600"),
-    )
+    # # LP #2154897 mitigation
+    # # REMOVE this block once resolute ships Python 3.14.5, which reverts the incremental
+    # # GC change (cpython#142516) and eliminates the keystone leak.
+    # module_utils.cfg_set(
+    #     CONF,
+    #     ("cache", "enabled", "true"),
+    #     ("cache", "backend", "dogpile.cache.memory"),
+    #     ("cache", "expiration_time", "600"),
+    # )
     LOG.debug("Running keystone-manage db_sync...")
     core_utils.sudo(
         "keystone-manage",
