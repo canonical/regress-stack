@@ -45,6 +45,7 @@ Regress Stack currently supports the following OpenStack modules:
 - **Cinder**: `cinder-api`, `cinder-scheduler`, `cinder-volume`
 - **Glance**: `glance-api`
 - **Heat**: `heat-api`, `heat-api-cfn`, `heat-engine`
+- **Horizon**: `openstack-dashboard`
 - **Keystone**: `keystone`, `apache2`, `libapache2-mod-wsgi-py3`
 - **Magnum**: `magnum-api`, `magnum-conductor`
 - **Neutron**: `neutron-server`, `neutron-ovn-metadata-agent`
@@ -54,7 +55,6 @@ Regress Stack currently supports the following OpenStack modules:
 
 The following modules are available on [Sunbeam](https://github.com/canonical/snap-openstack) but are not currently supported by Regress Stack:
 
-- **Horizon**
 - **Ironic**
 - **Masakari**
 - **Octavia**

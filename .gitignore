@@ -12,3 +12,7 @@ spread.yaml
 
 # Virtual environments
 .venv
+
+# Editor files
+.vscode/
+.idea/

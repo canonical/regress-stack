@@ -49,6 +49,19 @@ def test_packages_command_utils():
     ]
 
 
+def test_packages_command_horizon():
+    """Test that packages command works with horizon target."""
+    runner = CliRunner()
+    result = runner.invoke(packages, ["horizon"])
+    assert result.exit_code == 0
+
+    output_packages = result.output.strip().split()
+    assert "openstack-dashboard" in output_packages
+    assert "memcached" in output_packages
+    assert "keystone" in output_packages
+    assert "crudini" in output_packages
+
+
 def test_packages_command_all():
     """Test that packages command works without target (all modules)."""
     runner = CliRunner()
