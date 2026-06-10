@@ -131,6 +131,18 @@ def auth_env() -> typing.Dict[str, str]:
     }
 
 
+def system_auth_env() -> typing.Dict[str, str]:
+    return {
+        "OS_USERNAME": ADMIN_USERNAME,
+        "OS_PASSWORD": ADMIN_PASSWORD,
+        "OS_USER_DOMAIN_NAME": DEFAULT_DOMAIN_NAME,
+        "OS_AUTH_URL": OS_AUTH_URL,
+        "OS_IDENTITY_API_VERSION": "3",
+        "OS_REGION_NAME": utils.REGION,
+        "OS_SYSTEM_SCOPE": "all",
+    }
+
+
 def account_dict(service: str, password: str) -> typing.Dict[str, str]:
     return {
         "auth_url": OS_AUTH_URL,
@@ -155,6 +167,10 @@ def authtoken_service(service: str, password: str) -> typing.Dict[str, str]:
 
 def auth_rc():
     return "\n".join(f"export {k}={v}" for k, v in auth_env().items())
+
+
+def system_auth_rc():
+    return "\n".join(f"export {k}={v}" for k, v in system_auth_env().items())
 
 
 @functools.lru_cache()
@@ -326,3 +342,32 @@ def grant_project_role(user, role, project):
             project.assign_role_to_user(conn.identity, user, role)
         else:
             raise e
+
+
+def grant_system_role(user_name: str, role_name: str) -> None:
+    env = auth_env()
+    assignments = core_utils.run(
+        "openstack",
+        [
+            "role",
+            "assignment",
+            "list",
+            "--names",
+            "--user",
+            user_name,
+            "--system",
+            "all",
+            "-f",
+            "value",
+            "-c",
+            "Role",
+        ],
+        env=env,
+    )
+    if role_name in assignments.splitlines():
+        return
+    core_utils.run(
+        "openstack",
+        ["role", "add", "--system", "all", "--user", user_name, role_name],
+        env=env,
+    )

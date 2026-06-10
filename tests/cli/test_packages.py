@@ -98,3 +98,22 @@ def test_packages_command_no_tempest():
     output_packages = result.output.strip().split()
     assert "python3-tempestconf" in output_packages
     assert "tempest" not in output_packages
+
+
+def test_packages_command_ironic_enabled_by_default():
+    runner = CliRunner()
+    result = runner.invoke(packages, [])
+    assert result.exit_code == 0
+    assert "ironic-api" in result.output.split()
+
+
+def test_packages_command_ironic_ipmi_profile(monkeypatch):
+    monkeypatch.setenv("IRONIC_PROFILE", "ipmi")
+    runner = CliRunner()
+    result = runner.invoke(packages, ["ironic"])
+    assert result.exit_code == 0
+    output_packages = result.output.strip().split()
+    assert "ironic-api" in output_packages
+    assert "ironic-conductor" in output_packages
+    assert "python3-ironicclient" in output_packages
+    assert "virtualbmc" in output_packages

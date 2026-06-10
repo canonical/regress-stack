@@ -87,6 +87,10 @@ def build_dependency_graph(modules_mod: types.ModuleType) -> nx.DiGraph:
     for module in modules:
         canonical_name = package + "." + module.name
         module_loaded = load_module(canonical_name, module.module_finder.path)
+        enabled = getattr(module_loaded, "enabled", None)
+        if callable(enabled) and not enabled():
+            LOG.debug("Skipping disabled module %r", canonical_name)
+            continue
         mod = ModuleComp(
             canonical_name,
             module_loaded,

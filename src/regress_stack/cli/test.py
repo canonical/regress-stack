@@ -18,6 +18,31 @@ from regress_stack.cli.utils import collect_logs
 LOG = logging.getLogger(__name__)
 
 
+def _write_clouds_yaml(path: pathlib.Path, auth: dict[str, str]) -> None:
+    path.write_text(
+        "clouds:\n"
+        "  regress:\n"
+        "    auth:\n"
+        f"      auth_url: {auth['OS_AUTH_URL']}\n"
+        f"      username: {auth['OS_USERNAME']}\n"
+        f"      password: {auth['OS_PASSWORD']}\n"
+        f"      project_name: {auth['OS_PROJECT_NAME']}\n"
+        f"      user_domain_name: {auth['OS_USER_DOMAIN_NAME']}\n"
+        f"      project_domain_name: {auth['OS_PROJECT_DOMAIN_NAME']}\n"
+        f"    region_name: {auth['OS_REGION_NAME']}\n"
+        f'    identity_api_version: "{auth["OS_IDENTITY_API_VERSION"]}"\n'
+        "  regress-system:\n"
+        "    auth:\n"
+        f"      auth_url: {auth['OS_AUTH_URL']}\n"
+        f"      username: {auth['OS_USERNAME']}\n"
+        f"      password: {auth['OS_PASSWORD']}\n"
+        f"      user_domain_name: {auth['OS_USER_DOMAIN_NAME']}\n"
+        "    system_scope: all\n"
+        f"    region_name: {auth['OS_REGION_NAME']}\n"
+        f'    identity_api_version: "{auth["OS_IDENTITY_API_VERSION"]}"\n'
+    )
+
+
 @click.command()
 @click.option(
     "--concurrency",
@@ -57,19 +82,7 @@ def test(concurrency, retry_failed):
     # openstack.connect(cloud=...) which works on all versions.
     clouds_yaml = pathlib.Path(dir_name) / "clouds.yaml"
     auth = keystone.auth_env()
-    clouds_yaml.write_text(
-        "clouds:\n"
-        "  regress:\n"
-        "    auth:\n"
-        f"      auth_url: {auth['OS_AUTH_URL']}\n"
-        f"      username: {auth['OS_USERNAME']}\n"
-        f"      password: {auth['OS_PASSWORD']}\n"
-        f"      project_name: {auth['OS_PROJECT_NAME']}\n"
-        f"      user_domain_name: {auth['OS_USER_DOMAIN_NAME']}\n"
-        f"      project_domain_name: {auth['OS_PROJECT_DOMAIN_NAME']}\n"
-        f"    region_name: {auth['OS_REGION_NAME']}\n"
-        f'    identity_api_version: "{auth["OS_IDENTITY_API_VERSION"]}"\n'
-    )
+    _write_clouds_yaml(clouds_yaml, auth)
     env["OS_CLIENT_CONFIG_FILE"] = str(clouds_yaml.resolve())
 
     utils.run(
@@ -104,8 +117,14 @@ def test(concurrency, retry_failed):
         if configure := getattr(mod.module, "configure_tempest", None):
             with utils.measure("configure_tempest " + mod.name):
                 configure(tempest_conf)
-        includes_regexes = getattr(mod.module, "TEST_INCLUDE_REGEXES", [])
-        exclude_regexes = getattr(mod.module, "TEST_EXCLUDE_REGEXES", [])
+        if smoke_test := getattr(mod.module, "smoke_test", None):
+            with utils.measure("smoke_test " + mod.name):
+                smoke_test(tempest_conf.parent)
+        if regexes := getattr(mod.module, "tempest_regexes", None):
+            includes_regexes, exclude_regexes = regexes()
+        else:
+            includes_regexes = getattr(mod.module, "TEST_INCLUDE_REGEXES", [])
+            exclude_regexes = getattr(mod.module, "TEST_EXCLUDE_REGEXES", [])
         test_regexes.append((includes_regexes, exclude_regexes))
 
     test_regexes.append(
