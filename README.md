@@ -50,6 +50,7 @@ Regress Stack currently supports the following OpenStack modules:
 - **Ironic**: `ironic-api`, `ironic-conductor`
 - **Keystone**: `keystone`, `apache2`, `libapache2-mod-wsgi-py3`
 - **Magnum**: `magnum-api`, `magnum-conductor`
+- **Mistral**: `mistral-api`, `mistral-engine`, `mistral-executor`, `mistral-event-engine`
 - **Neutron**: `neutron-server`, `neutron-ovn-metadata-agent`
 - **Nova**: `nova-api`, `nova-conductor`, `nova-scheduler`, `nova-compute`, `nova-spiceproxy`, `spice-html5`
 - **OVN**: `ovn-central`, `openvswitch-switch`, `ovn-host`
@@ -66,6 +67,16 @@ The following modules are available on [Sunbeam](https://github.com/canonical/sn
 - **AODH**
 - **Ceilometer**
 - **Gnocchi**
+
+## Mistral Notes
+
+Mistral is currently limited to service bring-up and a small smoke check.
+
+`regress-stack` intentionally does not enable Mistral Tempest coverage at the
+moment. Ubuntu Noble ships an older `mistral-tempest-plugin` package, and the
+packaged plugin currently produces unreliable results in this environment,
+including failures caused by missing packaged test resources rather than the
+deployed service itself.
 
 ## Ironic Profiles
 
