@@ -16,6 +16,7 @@ def mock_modules():
         "module_finder",
         "__name__",
         "__file__",
+        "enabled",
         "DEPENDENCIES",
         "OPTIONAL_DEPENDENCIES",
         "PACKAGES",
@@ -307,3 +308,26 @@ def test_get_execution_order_invalid_target_without_filtering():
 
     with pytest.raises(RuntimeError, match="Target 'invalid' not found"):
         get_execution_order(regress_stack.modules, "invalid", filter_missing=False)
+
+
+@patch("regress_stack.core.modules.pkgutil.iter_modules")
+@patch("regress_stack.core.modules.load_module")
+@patch("regress_stack.core.modules.apt.pkgs_installed")
+def test_build_dependency_graph_skips_disabled_modules(
+    mock_pkgs_installed, mock_load_module, mock_iter_modules, mock_modules
+):
+    mock_modules.mod3.enabled.return_value = False
+    mock_iter_modules.return_value = [
+        mock_modules.mod1,
+        mock_modules.mod2,
+        mock_modules.mod3,
+    ]
+    mock_load_module.side_effect = lambda name, path: getattr(
+        mock_modules, name.rsplit(".", 1)[1]
+    )
+    mock_pkgs_installed.return_value = True
+
+    graph = build_dependency_graph(mock_modules)
+
+    mod3 = ModuleComp("regress_stack.modules.mod3", mock_modules.mod3)
+    assert not graph.has_node(mod3)
