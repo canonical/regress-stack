@@ -33,3 +33,6 @@ jobs:
 
   functional-tests:
     uses: ./.github/workflows/functional-tests.yaml
+
+  debian-build:
+    uses: ./.github/workflows/build-deb.yaml
