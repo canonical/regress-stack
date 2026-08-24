@@ -48,11 +48,12 @@ jobs:
         set -euxo pipefail
         sudo apt-get update
         sudo apt-get install -yq sbuild ubuntu-dev-tools debootstrap lintian devscripts
+        sudo usermod -aG sbuild "$USER"
 
     - name: Create schroot
       run: |
         set -euxo pipefail
-        mk-sbuild --arch=amd64 --name=${{ matrix.release }}-sbuild ${{ matrix.release }}
+        sg sbuild -c "mk-sbuild --arch=amd64 --name=${{ matrix.release }}-sbuild ${{ matrix.release }}"
 
     - name: Build source package
       run: |
