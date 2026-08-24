@@ -50,6 +50,11 @@ jobs:
         sudo apt-get install -yq sbuild ubuntu-dev-tools debootstrap lintian devscripts
         sudo usermod -aG sbuild "$USER"
 
+    - name: Install build dependencies
+      run: |
+        set -euxo pipefail
+        sudo mk-build-deps --install --remove --tool='apt-get --yes' debian/control
+
     - name: Create schroot
       run: |
         set -euxo pipefail
