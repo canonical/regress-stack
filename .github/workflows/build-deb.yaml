@@ -52,7 +52,7 @@ jobs:
     - name: Create schroot
       run: |
         set -euxo pipefail
-        sudo mk-sbuild --arch=amd64 --name=${{ matrix.release }}-sbuild ${{ matrix.release }}
+        mk-sbuild --arch=amd64 --name=${{ matrix.release }}-sbuild ${{ matrix.release }}
 
     - name: Build source package
       run: |
