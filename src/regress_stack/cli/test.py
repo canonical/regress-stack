@@ -117,11 +117,7 @@ def test(concurrency, retry_failed):
 
     LOG.info("Building test list")
     global_include_regex = ["smoke"]
-    global_exclude_regex = [
-        # Temporarily disabled until this issue is resolved:
-        # https://github.com/canonical/regress-stack/issues/87
-        "test_network_basic_ops"
-    ]
+    global_exclude_regex = []
 
     for include_regexes, exclude_regexes in test_regexes:
         if include_regexes and include_regexes[0]:
