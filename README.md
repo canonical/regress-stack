@@ -47,8 +47,10 @@ Regress Stack currently supports the following OpenStack modules:
 - **Cinder**: `cinder-api`, `cinder-scheduler`, `cinder-volume`
 - **Glance**: `glance-api`
 - **Heat**: `heat-api`, `heat-api-cfn`, `heat-engine`
+- **Ironic**: `ironic-api`, `ironic-conductor`
 - **Keystone**: `keystone`, `apache2`, `libapache2-mod-wsgi-py3`
 - **Magnum**: `magnum-api`, `magnum-conductor`
+- **Mistral**: `mistral-api`, `mistral-engine`, `mistral-executor`, `mistral-event-engine`
 - **Neutron**: `neutron-server`, `neutron-ovn-metadata-agent`
 - **Nova**: `nova-api`, `nova-conductor`, `nova-scheduler`, `nova-compute`, `nova-spiceproxy`, `spice-html5`
 - **OVN**: `ovn-central`, `openvswitch-switch`, `ovn-host`
@@ -57,7 +59,6 @@ Regress Stack currently supports the following OpenStack modules:
 The following modules are available on [Sunbeam](https://github.com/canonical/snap-openstack) but are not currently supported by Regress Stack:
 
 - **Horizon**
-- **Ironic**
 - **Masakari**
 - **Octavia**
 - **Watcher**
@@ -66,6 +67,79 @@ The following modules are available on [Sunbeam](https://github.com/canonical/sn
 - **AODH**
 - **Ceilometer**
 - **Gnocchi**
+
+## Mistral Notes
+
+Mistral is currently limited to service bring-up and a small smoke check.
+
+`regress-stack` intentionally does not enable Mistral Tempest coverage at the
+moment. Ubuntu Noble ships an older `mistral-tempest-plugin` package, and the
+packaged plugin currently produces unreliable results in this environment,
+including failures caused by missing packaged test resources rather than the
+deployed service itself.
+
+## Ironic Profiles
+
+Ironic is enabled by default. The default profile is `fake-hardware`, which is
+intended to behave like the other `regress-stack` package/regression lanes:
+
+```bash
+uv run regress-stack setup
+uv run regress-stack test
+```
+
+Select a profile explicitly when you need different behavior:
+
+```bash
+IRONIC_PROFILE=fake-hardware uv run regress-stack setup
+IRONIC_PROFILE=ipmi uv run regress-stack setup
+```
+
+Profile summary:
+
+- `fake-hardware`
+  - default
+  - intended for package validation and regression detection
+  - runs a curated `ironic_tempest_plugin.tests.api.admin` Tempest subset
+  - lighter footprint
+  - no nested libvirt guest
+  - no `virtualbmc`
+- `ipmi`
+  - advanced profile
+  - provisions a nested libvirt guest exposed through `virtualbmc`
+  - uploads TinyIPA deploy images and drives one nested node to `available`
+  - provides better realism for deploy-path, power-control, and networking
+    issues
+
+## Tempest Notes
+
+Ubuntu's packaged `ironic-tempest-plugin` defaults many API tests to
+`fake-hardware`, and the default `regress-stack` Ironic profile now matches
+that expectation.
+
+Practical guidance:
+
+- the default `fake-hardware` profile is the preferred path for package and
+  regression testing
+- the default `fake-hardware` Tempest lane targets
+  `ironic_tempest_plugin.tests.api.admin` with additional excludes for
+  unsupported fake-hardware features
+- the advanced `ipmi` profile is more realistic, but its Tempest coverage
+  should still be treated as curated per release
+
+## VM Requirements
+
+Recommended minimums depend on the feature set you enable:
+
+- Regress Stack with the default `fake-hardware` Ironic profile:
+  4 vCPU, 8 GiB RAM, 40 GiB disk
+- Regress Stack with the advanced `ipmi` Ironic profile:
+  8 vCPU, 16 GiB RAM, 80 GiB disk
+
+For the `ipmi` profile, nested virtualization support is
+strongly recommended. Without `/dev/kvm`, the nested baremetal VM path is
+still conceptually supported, but it will be much slower and more
+failure-prone.
 
 ## Contributing
 

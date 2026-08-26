@@ -46,3 +46,39 @@ def test_ensure_wsgi_scripts_is_noop_when_present(tmp_path, monkeypatch):
     assert public.read_text() == "public"
     assert admin.read_text() == "admin"
     assert warnings == []
+
+
+def test_system_auth_env():
+    env = keystone.system_auth_env()
+    assert env["OS_SYSTEM_SCOPE"] == "all"
+    assert "OS_PROJECT_NAME" not in env
+
+
+def test_grant_system_role_is_noop_when_present(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, args=(), **_kwargs):
+        calls.append((cmd, list(args)))
+        if args[:4] == ["role", "assignment", "list", "--names"]:
+            return "admin\n"
+        raise AssertionError(args)
+
+    monkeypatch.setattr(keystone.core_utils, "run", fake_run)
+    keystone.grant_system_role("admin", "admin")
+    assert len(calls) == 1
+
+
+def test_grant_system_role_adds_missing_assignment(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, args=(), **_kwargs):
+        calls.append((cmd, list(args)))
+        if args[:4] == ["role", "assignment", "list", "--names"]:
+            return ""
+        if args[:5] == ["role", "add", "--system", "all", "--user"]:
+            return ""
+        raise AssertionError(args)
+
+    monkeypatch.setattr(keystone.core_utils, "run", fake_run)
+    keystone.grant_system_role("admin", "admin")
+    assert len(calls) == 2
