@@ -5,6 +5,13 @@ export PYBUILD_NAME=regress_stack
 %:
 	dh $@ --buildsystem=pybuild --with python3
 
+override_dh_installman:
+	mkdir -p debian/tmp/manpages
+	PYTHONPATH=$(CURDIR)/debian/python3-regress-stack/usr/lib/python3/dist-packages \
+	python3 -c "from click_man.core import write_man_pages; from regress_stack.cli.main import main; write_man_pages('regress-stack', main, version='$(shell dpkg-parsechangelog -S Version)', target_dir='debian/tmp/manpages')"
+	find debian/tmp/manpages -name '*.1' | sort > debian/python3-regress-stack.manpages
+	dh_installman -O--buildsystem=pybuild
+
 override_dh_clean:
 	dh_clean
 	rm -rf .ruff_cache .venv
