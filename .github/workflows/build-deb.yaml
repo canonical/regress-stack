@@ -82,7 +82,7 @@ jobs:
     - name: Build binary package
       run: |
         set -euxo pipefail
-        sudo sbuild --chroot-mode=unshare --arch=amd64 -d ${{ matrix.release }}-sbuild --no-run-lintian ../regress-stack_*.dsc
+        sbuild --chroot-mode=unshare --arch=amd64 -d ${{ matrix.release }}-sbuild --no-run-lintian ../regress-stack_*.dsc
 
     - name: Run lintian
       continue-on-error: true
