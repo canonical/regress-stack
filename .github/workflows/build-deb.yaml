@@ -72,11 +72,6 @@ jobs:
         $chroot_mode = 'unshare';
         EOF
 
-    - name: Create schroot
-      run: |
-        set -euxo pipefail
-        sg sbuild -c "mk-sbuild --arch=amd64 --name=${{ matrix.release }}-sbuild ${{ matrix.release }}"
-
     - name: Build source package
       run: |
         set -euxo pipefail
