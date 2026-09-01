@@ -67,6 +67,13 @@ jobs:
         sudo usermod --add-subuids 100000-165535 $USERNAME
         sudo usermod --add-subgids 100000-165535 $USERNAME
 
+    - name: Filling sbuild cache
+      run: |
+        #!/bin/bash
+        set -ex
+        mkdir -p ~/.cache/sbuild
+        mmdebstrap --variant=buildd ${{ matrix.release }} ~/.cache/sbuild/${{ matrix.release }}-amd64.tar.xz http://archive.ubuntu.com/ubuntu
+
     - name: Build source package
       run: |
         set -euxo pipefail
