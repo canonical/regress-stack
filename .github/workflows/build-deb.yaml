@@ -70,7 +70,7 @@ jobs:
         #!/bin/bash
         set -ex
         mkdir -p ~/.cache/sbuild
-        mmdebstrap --variant=buildd ${{ matrix.release }} ~/.cache/sbuild/${{ matrix.release }}-amd64.tar.xz http://archive.ubuntu.com/ubuntu
+        mmdebstrap --skip=cleanup/apt/lists --variant=buildd ${{ matrix.release }} ~/.cache/sbuild/${{ matrix.release }}-amd64.tar.xz http://archive.ubuntu.com/ubuntu
 
     - name: Build source package
       run: |
