@@ -51,7 +51,7 @@ jobs:
         #!/bin/bash
         set -euxo pipefail
         sudo apt-get update
-        sudo apt-get install -yq sbuild ubuntu-dev-tools debootstrap lintian devscripts equivs eatmydata
+        sudo apt-get install -yq sbuild ubuntu-dev-tools debootstrap lintian devscripts equivs eatmydata mmdebstrap uidmap
         sudo usermod -aG sbuild "$USERNAME"
 
     - name: Create schroot lock directory
@@ -71,6 +71,8 @@ jobs:
         cat << 'EOF' > ~/.sbuildrc
         $chroot_mode = 'unshare';
         EOF
+        sudo usermod --add-subuids 100000-165535 $USERNAME
+        sudo usermod --add-subgids 100000-165535 $USERNAME
 
     - name: Build source package
       run: |
