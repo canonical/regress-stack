@@ -11,24 +11,22 @@ on:
 
 jobs:
   metadata:
-    name: Ubuntu supported releases
+    name: Ubuntu LTS, stable and devel releases
     runs-on: ubuntu-latest
     outputs:
       releases: ${{ steps.generate-releases.outputs.releases }}
     steps:
-      - name: Query Launchpad for supported releases
+      - name: Query distro-info for LTS, stable and devel releases
         id: generate-releases
         run: |
           set -euxo pipefail
-          echo -n releases= >> ${GITHUB_OUTPUT}
-          curl -s https://api.launchpad.net/devel/ubuntu/series | \
-            jq '.entries[] | select(.version >= "22.04" and
-                                    (.status == "Supported" or
-                                     .status == "Current Stable Release" or
-                                     .status == "Active Development" or
-                                     .status == "Pre-release Freeze")) |
-                .name' | jq -cs | \
-            tee -a ${GITHUB_OUTPUT}
+          sudo apt-get update -qq
+          sudo apt-get install -yq distro-info
+          releases=$(printf '%s\n' \
+            "$(ubuntu-distro-info --lts)" \
+            "$(ubuntu-distro-info --stable)" \
+            "$(ubuntu-distro-info --devel)" | sort -u | jq -R . | jq -cs)
+          echo "releases=${releases}" >> ${GITHUB_OUTPUT}
           cat ${GITHUB_OUTPUT}
 
   debian-build:
