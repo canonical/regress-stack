@@ -80,7 +80,7 @@ jobs:
     - name: Build binary package
       run: |
         set -euxo pipefail
-        sbuild --verbose --apt-update --chroot-mode=unshare -A -d ${{ matrix.release }} --no-run-lintian ../regress-stack_*.dsc
+        sbuild --verbose --components="main,universe" --chroot-mode=unshare -A -d ${{ matrix.release }} --no-run-lintian ../regress-stack_*.dsc
 
     - name: Run lintian
       continue-on-error: true
