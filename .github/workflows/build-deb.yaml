@@ -43,17 +43,34 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v7
 
+    - name: Set OS Username
+      run: echo "USERNAME=$(whoami)" >> $GITHUB_ENV
+
     - name: Install build tooling
       run: |
+        #!/bin/bash
         set -euxo pipefail
         sudo apt-get update
-        sudo apt-get install -yq sbuild ubuntu-dev-tools debootstrap lintian devscripts equivs
-        sudo usermod -aG sbuild "$USER"
+        sudo apt-get install -yq sbuild ubuntu-dev-tools debootstrap lintian devscripts equivs eatmydata
+        sudo usermod -aG sbuild "$USERNAME"
+
+    - name: Create schroot lock directory
+      run: |
+        #!/bin/bash
+        set -x
+        sudo mkdir -p /var/lock/schroot
+        sudo chmod 755 /var/lock/schroot
 
     - name: Install build dependencies
       run: |
         set -euxo pipefail
         sudo mk-build-deps --install --remove --tool='apt-get --yes' debian/control
+
+    - name: Configure sbuild backend
+      run: |
+        cat << 'EOF' > ~/.sbuildrc
+        $chroot_mode = 'unshare';
+        EOF
 
     - name: Create schroot
       run: |
@@ -68,7 +85,7 @@ jobs:
     - name: Build binary package
       run: |
         set -euxo pipefail
-        sudo sbuild --arch=amd64 -d ${{ matrix.release }}-sbuild --no-run-lintian ../regress-stack_*.dsc
+        sudo sbuild --chroot-mode=unshare --arch=amd64 -d ${{ matrix.release }}-sbuild --no-run-lintian ../regress-stack_*.dsc
 
     - name: Run lintian
       continue-on-error: true
