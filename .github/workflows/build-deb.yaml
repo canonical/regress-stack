@@ -54,13 +54,6 @@ jobs:
         sudo apt-get install -yq sbuild ubuntu-dev-tools debootstrap lintian devscripts equivs eatmydata mmdebstrap uidmap
         sudo usermod -aG sbuild "$USERNAME"
 
-    - name: Create schroot lock directory
-      run: |
-        #!/bin/bash
-        set -x
-        sudo mkdir -p /var/lock/schroot
-        sudo chmod 755 /var/lock/schroot
-
     - name: Install build dependencies
       run: |
         set -euxo pipefail
