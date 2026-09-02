@@ -1,0 +1,101 @@
+name: Build Debian Package
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "JSON encoded list of releases."
+        required: false
+        type: string
+
+jobs:
+  metadata:
+    name: Ubuntu LTS, stable and devel releases
+    runs-on: ubuntu-latest
+    outputs:
+      releases: ${{ steps.generate-releases.outputs.releases }}
+    steps:
+      - name: Query distro-info for LTS, stable and devel releases
+        id: generate-releases
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -yq distro-info
+          releases=$(printf '%s\n' \
+            "$(ubuntu-distro-info --lts)" \
+            "$(ubuntu-distro-info --stable)" \
+            "$(ubuntu-distro-info --devel)" | sort -u | jq -R . | jq -cs)
+          echo "releases=${releases}" >> ${GITHUB_OUTPUT}
+          cat ${GITHUB_OUTPUT}
+
+  debian-build:
+    needs:
+      - metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ${{ inputs.release && fromJson(inputs.release) || fromJson(needs.metadata.outputs.releases) }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Set OS Username
+      run: echo "USERNAME=$(whoami)" >> $GITHUB_ENV
+
+    - name: Install build tooling
+      run: |
+        #!/bin/bash
+        set -euxo pipefail
+        sudo apt-get update
+        sudo apt-get install -yq sbuild ubuntu-dev-tools debootstrap lintian devscripts equivs eatmydata mmdebstrap uidmap
+        sudo usermod -aG sbuild "$USERNAME"
+
+    - name: Install build dependencies
+      run: |
+        set -euxo pipefail
+        sudo mk-build-deps --install --remove --tool='apt-get --yes' debian/control
+
+    - name: Configure sbuild backend
+      run: |
+        cat << 'EOF' > ~/.sbuildrc
+        $chroot_mode = 'unshare';
+        EOF
+        sudo usermod --add-subuids 100000-165535 $USERNAME
+        sudo usermod --add-subgids 100000-165535 $USERNAME
+
+    - name: Filling sbuild cache
+      run: |
+        #!/bin/bash
+        set -ex
+        mkdir -p ~/.cache/sbuild
+        mmdebstrap --skip=cleanup/apt/lists --components="main universe" --variant=buildd ${{ matrix.release }} ~/.cache/sbuild/${{ matrix.release }}-amd64.tar.xz http://archive.ubuntu.com/ubuntu
+
+    - name: Build source package
+      run: |
+        set -euxo pipefail
+        dpkg-buildpackage -S -us -uc -d
+
+    - name: Build binary package
+      run: |
+        set -euxo pipefail
+        sbuild --verbose --chroot-mode=unshare -A -d ${{ matrix.release }} --no-run-lintian ../regress-stack_*.dsc
+
+    - name: Run lintian
+      continue-on-error: true
+      run: |
+        set -euxo pipefail
+        lintian --info ../*.changes
+
+    - name: Collect artifacts
+      run: |
+        set -euxo pipefail
+        mkdir -p /tmp/artifacts
+        cp ../*.deb ../*.dsc ../*.changes ../*.buildinfo ../*.tar.* /tmp/artifacts/
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: debian-packages-${{ matrix.release }}-${{ github.sha }}
+        path: /tmp/artifacts/

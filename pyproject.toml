@@ -1,6 +1,6 @@
 [project]
 name = "regress-stack"
-version = "0.1.0"
+version = "0.3.0"
 description = "Regress Stack is a straightforward Ubuntu OpenStack package configurator designed to simplify the process of setting up an OpenStack environment for testing purposes."
 readme = "README.md"
 requires-python = ">=3.8"

@@ -12,3 +12,9 @@ spread.yaml
 
 # Virtual environments
 .venv
+
+# Debian build artifacts
+debian/files
+
+# Agent
+.opencode
