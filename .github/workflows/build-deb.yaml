@@ -70,7 +70,7 @@ jobs:
         #!/bin/bash
         set -ex
         mkdir -p ~/.cache/sbuild
-        mmdebstrap --skip=cleanup/apt/lists --variant=buildd ${{ matrix.release }} ~/.cache/sbuild/${{ matrix.release }}-amd64.tar.xz http://archive.ubuntu.com/ubuntu
+        mmdebstrap --skip=cleanup/apt/lists --components="main universe" --variant=buildd ${{ matrix.release }} ~/.cache/sbuild/${{ matrix.release }}-amd64.tar.xz http://archive.ubuntu.com/ubuntu
 
     - name: Build source package
       run: |
@@ -80,7 +80,7 @@ jobs:
     - name: Build binary package
       run: |
         set -euxo pipefail
-        sbuild --verbose --components="main,universe" --chroot-mode=unshare -A -d ${{ matrix.release }} --no-run-lintian ../regress-stack_*.dsc
+        sbuild --verbose --chroot-mode=unshare -A -d ${{ matrix.release }} --no-run-lintian ../regress-stack_*.dsc
 
     - name: Run lintian
       continue-on-error: true
