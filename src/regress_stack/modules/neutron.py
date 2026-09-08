@@ -69,6 +69,7 @@ def setup():
             "DEFAULT",
             {
                 "core_plugin": "ml2",
+                "dns_domain": "regress-stack.test.",
                 "service_plugins": "metering,segments,ovn-router,port_forwarding,trunk",
                 "router_distributed": "false",
                 "l3_ha": "false",
