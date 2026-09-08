@@ -14,6 +14,7 @@ from regress_stack.core.modules import get_execution_order
 from regress_stack.modules import keystone
 from regress_stack.modules import utils as module_utils
 from regress_stack.cli.utils import collect_logs
+from regress_stack.multinode.setup import with_local_context
 
 LOG = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ LOG = logging.getLogger(__name__)
     help="Number of times to retry failed tests, defaults to 0 (no retries).",
 )
 @utils.measure_time
+@with_local_context
 def test(concurrency, retry_failed):
     """Run the regression tests using Tempest."""
 
@@ -57,7 +59,10 @@ def test(concurrency, retry_failed):
     # openstack.connect(cloud=...) which works on all versions.
     clouds_yaml = pathlib.Path(dir_name) / "clouds.yaml"
     auth = keystone.auth_env()
-    clouds_yaml.write_text(
+    from regress_stack.core.deployment import private_write
+
+    private_write(
+        clouds_yaml,
         "clouds:\n"
         "  regress:\n"
         "    auth:\n"
@@ -68,7 +73,7 @@ def test(concurrency, retry_failed):
         f"      user_domain_name: {auth['OS_USER_DOMAIN_NAME']}\n"
         f"      project_domain_name: {auth['OS_PROJECT_DOMAIN_NAME']}\n"
         f"    region_name: {auth['OS_REGION_NAME']}\n"
-        f'    identity_api_version: "{auth["OS_IDENTITY_API_VERSION"]}"\n'
+        f'    identity_api_version: "{auth["OS_IDENTITY_API_VERSION"]}"\n',
     )
     env["OS_CLIENT_CONFIG_FILE"] = str(clouds_yaml.resolve())
 
@@ -90,6 +95,7 @@ def test(concurrency, retry_failed):
         cwd=dir_name,
     )
     tempest_conf = pathlib.Path(dir_name) / "etc" / "tempest.conf"
+    tempest_conf.chmod(0o600)
     module_utils.cfg_set(
         str(tempest_conf),
         ("validation", "image_ssh_user", "ubuntu"),
@@ -181,7 +187,10 @@ def test(concurrency, retry_failed):
             # Collect logs after the last retry to avoid collecting logs
             # multiple times in case of multiple retries.
             if retries > retry_failed:
-                collect_logs()
+                from regress_stack.core.deployment import current
+
+                if current() is None:
+                    collect_logs()
                 raise
             else:
                 LOG.warning(
