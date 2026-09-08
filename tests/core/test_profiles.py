@@ -58,7 +58,12 @@ def test_explicit_profile_fails_on_missing_local_package(deployment, monkeypatch
 
 def test_controllers_have_identical_package_requirements(deployment):
     contexts = [
-        Context(deployment, node.name, str(uuid.uuid4()))
+        Context(
+            deployment,
+            node.name,
+            str(uuid.uuid4()),
+            {"coordination/implementation": "valkey"},
+        )
         for node in deployment.controllers
     ]
     required = [profiles.packages(context) for context in contexts]
@@ -71,4 +76,6 @@ def test_controllers_have_identical_package_requirements(deployment):
         "nova-compute",
         "haproxy",
         "keepalived",
+        "valkey-server",
+        "valkey-sentinel",
     } <= set(required[0])

@@ -97,8 +97,13 @@ def packages(context: Context, no_tempest: bool = True) -> list[str]:
     required = ["crudini", "python3-openstackclient"]
     for module in execution_order(context, check_packages=False):
         required.extend(module.packages(no_tempest=no_tempest))
-    if context.controller and context.deployment.profile == "hyperconverged":
-        required.extend(("haproxy", "keepalived"))
+    if context.controller:
+        from regress_stack.multinode import coordination
+
+        required.extend(coordination.packages(context))
+        required.append("haproxy")
+        if context.deployment.profile == "hyperconverged":
+            required.append("keepalived")
     if context.controller and not no_tempest:
         required.extend(("tempest", "python3-tempestconf"))
     return list(dict.fromkeys(required))
