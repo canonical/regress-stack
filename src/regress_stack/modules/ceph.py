@@ -37,6 +37,10 @@ OSD_SIZE_GB = 2
 
 
 def installed() -> bool:
+    from regress_stack.core.deployment import current
+
+    if current() is not None:
+        return True
     return core_apt.pkgs_installed(PACKAGES)
 
 
@@ -329,6 +333,10 @@ def setup_osd(i: int) -> Path:
 
 
 def ensure_pool(name: str) -> str:
+    from regress_stack.core.deployment import current
+
+    if current() is not None:
+        return name
     pools = core_utils.run("ceph", ["osd", "pool", "ls"]).splitlines()
     for pool in pools:
         if name == pool.strip():
@@ -339,6 +347,12 @@ def ensure_pool(name: str) -> str:
 
 def ensure_authenticate(pool: str, user: typing.Optional[str] = None) -> Path:
     keyring = Path(f"/etc/ceph/ceph.client.{pool}.keyring")
+    from regress_stack.core.deployment import current
+
+    if current() is not None:
+        if not keyring.exists():
+            raise RuntimeError("Missing preseeded Ceph client keyring")
+        return keyring
     if keyring.exists():
         return keyring
     core_utils.run(
@@ -368,11 +382,19 @@ def ensure_authenticate(pool: str, user: typing.Optional[str] = None) -> Path:
 
 
 def get_key(user: str) -> str:
+    from regress_stack.core.deployment import current
+
+    if current() is not None:
+        return current().secret(f"ceph/client.{user}")
     return core_utils.run("ceph", ["auth", "get-key", f"client.{user}"]).strip()
 
 
 @functools.lru_cache
 def rbd_uuid() -> str:
+    from regress_stack.core.deployment import current
+
+    if current() is not None:
+        return current().secret("ceph/rbd_uuid")
     if RBD_UUID.exists():
         return RBD_UUID.read_text().strip()
     uuid_str = str(uuid.uuid4())

@@ -57,7 +57,9 @@ def setup():
     keystone.ensure_endpoint(service_cfn, URL_CFN)
     domain = keystone.ensure_domain(SERVICE)
     heat_stack_admin = keystone.ensure_user(
-        HEAT_STACK_ADMIN, HEAT_STACK_ADMIN_PASSWORD, domain.id
+        HEAT_STACK_ADMIN,
+        module_utils.preseed_value("heat/domain", HEAT_STACK_ADMIN_PASSWORD),
+        domain.id,
     )
     keystone.grant_domain_role(heat_stack_admin, keystone.admin_role(), domain)
     keystone.ensure_role(HEAT_STACK_OWNER)
@@ -77,7 +79,7 @@ def setup():
             "trustee",
             {
                 "auth_type": "password",
-                "auth_url": keystone.OS_AUTH_URL,
+                "auth_url": keystone.auth_url(),
                 "username": username,
                 "password": password,
                 "user_domain_id": keystone.service_domain(),
@@ -95,11 +97,13 @@ def setup():
             {
                 "stack_user_domain_id": domain.id,
                 "stack_domain_admin": HEAT_STACK_ADMIN,
-                "stack_domain_admin_password": HEAT_STACK_ADMIN_PASSWORD,
+                "stack_domain_admin_password": module_utils.preseed_value(
+                    "heat/domain", HEAT_STACK_ADMIN_PASSWORD
+                ),
             },
         ),
     )
-    core_utils.sudo("heat-manage", ["db_sync"], user=SERVICE)
+    module_utils.bootstrap_sudo("heat-manage", ["db_sync"], user=SERVICE)
     heat_daemons = ["heat-api", "heat-api-cfn", "heat-engine"]
     if (
         core_apt.PkgVersionCompare("python3-heat", upstream=True)
@@ -147,11 +151,11 @@ def configure_tempest(tempest_conf: pathlib.Path):
         *module_utils.dict_to_cfg_set_args(
             "heat_plugin",
             {
-                "auth_url": keystone.OS_AUTH_URL,
+                "auth_url": keystone.auth_url(),
                 "username": keystone.ADMIN_USERNAME,
-                "password": keystone.ADMIN_PASSWORD,
+                "password": keystone.admin_password(),
                 "admin_username": keystone.ADMIN_USERNAME,
-                "admin_password": keystone.ADMIN_PASSWORD,
+                "admin_password": keystone.admin_password(),
                 "project_name": demo_project.name,
                 "admin_project_name": keystone.ADMIN_PROJECT,
                 "user_domain_name": keystone.DEFAULT_DOMAIN_NAME,

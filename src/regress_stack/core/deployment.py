@@ -21,11 +21,13 @@ from typing import Iterator, Mapping, Optional
 import uuid
 
 
-_NAME = re.compile(r"[a-z][a-z0-9-]{0,62}\Z")
+_NAME = re.compile(r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 _INTERFACE = re.compile(r"[a-zA-Z0-9_.-]{1,15}\Z")
 
 
 def _ipv4(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("IPv4 addresses must be strings")
     address = ipaddress.IPv4Address(value)
     if address.is_unspecified or address.is_multicast or address.is_loopback:
         raise ValueError(
@@ -300,10 +302,21 @@ def current() -> Optional[Context]:
     return _CURRENT.get()
 
 
+_BOOTSTRAP_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "bootstrap_only", default=True
+)
+
+
+def bootstrap_only() -> bool:
+    return _BOOTSTRAP_ONLY.get()
+
+
 @contextlib.contextmanager
-def activate(context: Context) -> Iterator[Context]:
+def activate(context: Context, *, bootstrap_only: bool = True) -> Iterator[Context]:
     token = _CURRENT.set(context)
+    phase_token = _BOOTSTRAP_ONLY.set(bootstrap_only)
     try:
         yield context
     finally:
+        _BOOTSTRAP_ONLY.reset(phase_token)
         _CURRENT.reset(token)

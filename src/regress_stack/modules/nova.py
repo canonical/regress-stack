@@ -71,25 +71,36 @@ def determine_packages(no_tempest: bool = False) -> list[str]:
 
 
 def setup():
-    db_user, db_pass = mysql.ensure_service(SERVICE)
-    db_api_user, db_api_pass = mysql.ensure_service("nova_api")
-    db_cell0_user, db_cell0_pass = mysql.ensure_service("nova_cell0")
+    from regress_stack.core.deployment import current
+
+    context = current()
+    controller = context is None or context.controller
+    if controller:
+        db_user, db_pass = mysql.ensure_service(SERVICE)
+        db_api_user, db_api_pass = mysql.ensure_service("nova_api")
+        db_cell0_user, db_cell0_pass = mysql.ensure_service("nova_cell0")
     rabbit_user, rabbit_pass = rabbitmq.ensure_service(SERVICE)
     username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, URL)
     module_utils.cfg_set(
         CONF,
-        (
-            "database",
-            "connection",
-            mysql.connection_string(SERVICE, db_user, db_pass),
+        *(
+            [
+                (
+                    "database",
+                    "connection",
+                    mysql.connection_string(SERVICE, db_user, db_pass),
+                ),
+                ("database", "max_pool_size", "1"),
+                (
+                    "api_database",
+                    "connection",
+                    mysql.connection_string("nova_api", db_api_user, db_api_pass),
+                ),
+                ("api_database", "max_pool_size", "1"),
+            ]
+            if controller
+            else []
         ),
-        ("database", "max_pool_size", "1"),
-        (
-            "api_database",
-            "connection",
-            mysql.connection_string("nova_api", db_api_user, db_api_pass),
-        ),
-        ("api_database", "max_pool_size", "1"),
         ("DEFAULT", "transport_url", rabbitmq.transport_url(rabbit_user, rabbit_pass)),
         ("DEFAULT", "host", core_utils.fqdn()),
         ("DEFAULT", "my_ip", core_utils.my_ip()),
@@ -108,7 +119,7 @@ def setup():
             "neutron", keystone.account_dict(username, password)
         ),
         ("neutron", "service_metadata_proxy", "true"),
-        ("neutron", "metadata_proxy_shared_secret", neutron.METADATA_SECRET),
+        ("neutron", "metadata_proxy_shared_secret", neutron.metadata_secret()),
         *module_utils.dict_to_cfg_set_args(
             "service_user", keystone.account_dict(username, password)
         ),
@@ -141,7 +152,7 @@ def setup():
                 "virt_type": virt_type(),
             },
         ),
-        ("os_vif_ovs", "ovsdb_connection", ovn.OVSDB_CONNECTION),
+        ("os_vif_ovs", "ovsdb_connection", ovn.local_connection()),
     )
     _ensure_questing_compat()
 
@@ -178,23 +189,30 @@ def setup():
             ),
         )
 
-    core_utils.sudo("nova-manage", ["api_db", "sync"], user="nova")
-    core_utils.sudo(
-        "nova-manage",
-        [
-            "cell_v2",
-            "map_cell0",
-            "--database_connection",
-            mysql.connection_string("nova_cell0", db_cell0_user, db_cell0_pass),
-        ],
-        user="nova",
-    )
-    list_cells = core_utils.sudo("nova-manage", ["cell_v2", "list_cells"], user="nova")
-    if " cell1 " not in list_cells:
+    if module_utils.bootstrap():
+        core_utils.sudo("nova-manage", ["api_db", "sync"], user="nova")
         core_utils.sudo(
-            "nova-manage", ["cell_v2", "create_cell", "--name=cell1"], user="nova"
+            "nova-manage",
+            [
+                "cell_v2",
+                "map_cell0",
+                "--database_connection",
+                mysql.connection_string("nova_cell0", db_cell0_user, db_cell0_pass),
+            ],
+            user="nova",
         )
-    core_utils.sudo("nova-manage", ["db", "sync"], user="nova")
+        list_cells = core_utils.sudo(
+            "nova-manage", ["cell_v2", "list_cells"], user="nova"
+        )
+        if " cell1 " not in list_cells:
+            core_utils.sudo(
+                "nova-manage", ["cell_v2", "create_cell", "--name=cell1"], user="nova"
+            )
+        core_utils.sudo("nova-manage", ["db", "sync"], user="nova")
+
+    if not controller:
+        core_utils.restart_service("nova-compute")
+        return
 
     nova_daemons = ["nova-api", "nova-scheduler", "nova-conductor", "nova-compute"]
 
@@ -205,6 +223,9 @@ def setup():
 
     for _daemon in nova_daemons:
         core_utils.restart_service(_daemon)
+
+    if context is not None:
+        return
 
     # Give some time for nova-compute to be up before discovering hosts
     for _ in range(25):
@@ -227,6 +248,9 @@ def _api_runs_under_apache() -> bool:
 
 
 def _ensure_questing_compat() -> None:
+    from regress_stack.core.deployment import current
+
+    context = current()
     if _using_sudo_rs():
         _ensure_sudo_rs_rootwrap()
         module_utils.cfg_set(
@@ -234,7 +258,7 @@ def _ensure_questing_compat() -> None:
             ("nova_sys_admin", "helper_command", NOVA_PRIVSEP_HELPER),
             ("vif_plug_ovs_privileged", "helper_command", NOVA_PRIVSEP_HELPER),
         )
-    if _api_runs_under_apache():
+    if (context is None or context.controller) and _api_runs_under_apache():
         _ensure_metadata_site()
 
 

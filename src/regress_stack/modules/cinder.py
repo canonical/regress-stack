@@ -30,6 +30,11 @@ _TEMPEST_SERVICE_TYPE_VERSION = (42, 0, 0)
 
 
 def get_service_type():
+    from regress_stack.core.deployment import current
+
+    context = current()
+    if context and "cinder/service-type" in context.values:
+        return context.values["cinder/service-type"]
     version = core_utils.tempest_version()
     if version is not None and version >= _TEMPEST_SERVICE_TYPE_VERSION:
         return _SERVICE_TYPE
@@ -37,6 +42,10 @@ def get_service_type():
 
 
 def installed() -> bool:
+    from regress_stack.core.deployment import current
+
+    if current() is not None:
+        return True
     return core_apt.pkgs_installed(PACKAGES)
 
 
@@ -86,7 +95,7 @@ def setup():
                 "rbd_max_clone_depth": "5",
                 "rbd_store_chunk_size": "4",
                 "rbd_exclusive_cinder_pool": "true",
-                "backend_host": f"{SERVICE}@{core_utils.fqdn()}",
+                "backend_host": _backend_host(),
             },
         ),
     )
@@ -99,7 +108,7 @@ def setup():
                 "key_manager", barbican.key_manager_cfg()
             ),
         )
-    core_utils.sudo("cinder-manage", ["db", "sync"], SERVICE)
+    module_utils.bootstrap_sudo("cinder-manage", ["db", "sync"], SERVICE)
     core_utils.restart_apache()
     core_utils.restart_service("cinder-scheduler")
     core_utils.restart_service("cinder-volume")
@@ -140,3 +149,9 @@ def _ensure_sudo_rs_rootwrap() -> None:
     CINDER_SUDOERS.write_text(contents)
     CINDER_SUDOERS.chmod(0o440)
     core_utils.run("visudo", ["-cf", str(CINDER_SUDOERS)])
+
+
+def _backend_host():
+    from regress_stack.core.deployment import current
+
+    return current().local.name if current() else f"{SERVICE}@{core_utils.fqdn()}"

@@ -128,7 +128,9 @@ def setup():
     username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, URL)
     domain = keystone.ensure_domain(SERVICE)
     magnum_domain_admin = keystone.ensure_user(
-        MAGNUM_DOMAIN_ADMIN, MAGNUM_ADMIN_DOMAIN_PASSWORD, domain.id
+        MAGNUM_DOMAIN_ADMIN,
+        module_utils.preseed_value("magnum/domain", MAGNUM_ADMIN_DOMAIN_PASSWORD),
+        domain.id,
     )
     keystone.grant_domain_role(magnum_domain_admin, keystone.admin_role(), domain)
     module_utils.cfg_set(
@@ -155,14 +157,16 @@ def setup():
             {
                 "trustee_domain_name": SERVICE,
                 "trustee_domain_admin_name": MAGNUM_DOMAIN_ADMIN,
-                "trustee_domain_admin_password": MAGNUM_ADMIN_DOMAIN_PASSWORD,
+                "trustee_domain_admin_password": module_utils.preseed_value(
+                    "magnum/domain", MAGNUM_ADMIN_DOMAIN_PASSWORD
+                ),
                 # cluster user trust necessary if using cinder for volumes
                 "cluster_user_trust": "true",
             },
         ),
     )
     pathlib.Path(AUTH_POLICY).write_text(AUTH_POLICY_TPL)
-    core_utils.sudo("magnum-db-manage", ["upgrade"], user=SERVICE)
+    module_utils.bootstrap_sudo("magnum-db-manage", ["upgrade"], user=SERVICE)
     core_utils.restart_service("magnum-api")
     core_utils.restart_service("magnum-conductor")
 

@@ -93,7 +93,9 @@ def test_duplicate_identity(inventory):
         )
 
 
-@pytest.mark.parametrize("name", ["../node", "NODE", "node\nother", "-node", ""])
+@pytest.mark.parametrize(
+    "name", ["../node", "NODE", "node\nother", "-node", "node-", ""]
+)
 def test_unsafe_node_names(name):
     with pytest.raises(ValueError):
         Node(name, "192.0.2.1", "ens3", "ens4")
@@ -190,3 +192,8 @@ def test_private_io_rejects_fifo(tmp_path):
     os.mkfifo(fifo, 0o600)
     with pytest.raises(ValueError):
         private_read(fifo)
+
+
+def test_node_rejects_numeric_ip():
+    with pytest.raises(ValueError, match="must be strings"):
+        Node("node1", 3221225985, "ens3", "ens4")
