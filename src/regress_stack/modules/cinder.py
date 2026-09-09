@@ -155,3 +155,38 @@ def _backend_host():
     from regress_stack.core.deployment import current
 
     return current().local.name if current() else f"{SERVICE}@{core_utils.fqdn()}"
+
+
+def configure_tempest(tempest_conf: pathlib.Path):
+    if get_service_type() != _SERVICE_TYPE:
+        return
+    # Packaged python-tempestconf versions that only recognize volumev3
+    # disable Cinder discovery when the catalog uses block-storage.
+    proxy = keystone.o7k().block_storage
+    endpoint = proxy.get_endpoint_data()
+    services = proxy.get("/os-services", params={"binary": "cinder-backup"})
+    services.raise_for_status()
+    pools = proxy.get("/scheduler-stats/get_pools")
+    pools.raise_for_status()
+    backends = sorted(
+        {
+            pool["name"].split("@", 1)[1].split("#", 1)[0]
+            for pool in pools.json()["pools"]
+        }
+    )
+    backup = any(
+        service["state"] == "up" and service["status"] == "enabled"
+        for service in services.json()["services"]
+    )
+    options = [
+        ("service_available", "cinder", "True"),
+        ("volume", "catalog_type", _SERVICE_TYPE),
+        ("volume", "backend_names", ",".join(backends)),
+        ("volume-feature-enabled", "multi_backend", str(len(backends) > 1)),
+        ("volume-feature-enabled", "backup", str(backup)),
+    ]
+    for name in ("min_microversion", "max_microversion"):
+        version = getattr(endpoint, name)
+        if version is not None:
+            options.append(("volume", name, ".".join(map(str, version))))
+    module_utils.cfg_set(str(tempest_conf), *options)

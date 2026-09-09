@@ -115,3 +115,41 @@ def test_ensure_questing_compat(monkeypatch):
             ),
         )
     ]
+
+
+def test_tempest_block_storage_discovery(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    monkeypatch.setattr(cinder, "get_service_type", lambda: "block-storage")
+    proxy = Mock()
+    proxy.get_endpoint_data.return_value = SimpleNamespace(
+        min_microversion=(3, 0), max_microversion=(3, 71)
+    )
+    services, pools = Mock(), Mock()
+    services.json.return_value = {"services": []}
+    pools.json.return_value = {"pools": [{"name": "regress-stack@ceph#ceph"}]}
+    proxy.get.side_effect = [services, pools]
+    monkeypatch.setattr(
+        cinder.keystone, "o7k", lambda: SimpleNamespace(block_storage=proxy)
+    )
+    configure = Mock()
+    monkeypatch.setattr(cinder.module_utils, "cfg_set", configure)
+    cinder.configure_tempest(tmp_path / "tempest.conf")
+    options = configure.call_args.args[1:]
+    assert ("service_available", "cinder", "True") in options
+    assert ("volume", "catalog_type", "block-storage") in options
+    assert ("volume", "max_microversion", "3.71") in options
+    assert ("volume-feature-enabled", "backup", "False") in options
+    services.raise_for_status.assert_called_once_with()
+    pools.raise_for_status.assert_called_once_with()
+
+
+def test_tempest_legacy_cinder_discovery_is_preserved(monkeypatch, tmp_path):
+    from unittest.mock import Mock
+
+    monkeypatch.setattr(cinder, "get_service_type", lambda: "volumev3")
+    configure = Mock()
+    monkeypatch.setattr(cinder.module_utils, "cfg_set", configure)
+    cinder.configure_tempest(tmp_path / "tempest.conf")
+    configure.assert_not_called()
