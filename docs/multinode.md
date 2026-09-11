@@ -1,10 +1,10 @@
 # Explicit multinode deployments
 
-Live validation covers **Ubuntu 24.04 Noble with OpenStack Caracal**. Setup
-does not restrict the Ubuntu release or Nova version; other combinations
-have not been live-validated. The existing `regress-stack setup [TARGET]`
-command retains its installed-package single-node discovery. Explicit deployments use an inventory and configure a
-complete fixed role; they reject missing packages rather than dropping modules.
+Explicit deployments use an inventory and configure a complete fixed role;
+they reject missing packages rather than dropping modules. Setup does not
+restrict the Ubuntu release or Nova version. The existing
+`regress-stack setup [TARGET]` command retains its installed-package
+single-node discovery.
 
 The `hyperconverged` profile has exactly three controllers. Each runs the same
 control-plane, compute, and Ceph services. Additional entries in `computes` run
@@ -136,6 +136,19 @@ cluster disaster-recovery tool. Never enable persistent MySQL bootstrap mode.
 
 ## External HA acceptance
 
+Validation recorded on 2026-09-09 passed native Tempest and persistent per-host
+I/O on Jammy/Yoga, Noble/Caracal, and Resolute/Gazpacho. Each release was tested
+with three hyperconverged nodes, three hyperconverged nodes plus one compute,
+and one controller plus three computes. Controller failover results varied:
+
+- **Noble/Caracal:** individual controller failure/return checks passed on both
+  hyperconverged topologies after convergence.
+- **Jammy/Yoga:** the three-node topology passed; the four-node topology had an
+  unresolved new-instance creation failure during controller-2 loss, with a
+  missing Nova RPC reply queue.
+- **Resolute/Gazpacho:** controller failover was blocked by the archive Neutron
+  issue [LP #2161232](https://bugs.launchpad.net/neutron/+bug/2161232).
+
 The harness must record package versions and the inventory, then:
 
 1. Establish full readiness, run Tempest, and place identifiable workloads on
@@ -161,6 +174,7 @@ Run the native checks:
 
 ```sh
 uv run py.test
+uv run mypy
 uv run ruff check .
 ```
 

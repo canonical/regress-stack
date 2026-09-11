@@ -1,18 +1,68 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
-import json
+from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Sequence
+import json
+from typing import TYPE_CHECKING, TypedDict, cast
+
+from regress_stack.core.deployment import Context, Node
 from regress_stack.multinode import common, coordination, networking
 
+if TYPE_CHECKING:
+    from openstack.block_storage.v3._proxy import Proxy as BlockStorageProxy
+    from openstack.connection import Connection
 
-def queue_replicas_ready(rows, controller_count):
-    def expires(row):
+
+class QueueInfo(TypedDict):
+    """Fields used from RabbitMQ's list_queues JSON response."""
+
+    type: str
+    durable: bool
+    arguments: dict[str, object] | Sequence[Sequence[object]]
+    members: list[str] | str
+    online: list[str] | str
+
+
+class _VolumeService(TypedDict):
+    host: str
+    state: str
+    status: str
+
+
+class _PlacementGroupState(TypedDict):
+    state_name: str
+
+
+class _PlacementGroupMap(TypedDict, total=False):
+    pgs_by_state: list[_PlacementGroupState]
+
+
+class _CephStatus(TypedDict):
+    pgmap: _PlacementGroupMap
+
+
+class _OVNDatabase(TypedDict):
+    connected: bool
+    model: str
+
+
+class _OVNQueryResult(TypedDict):
+    rows: list[_OVNDatabase]
+
+
+def queue_replicas_ready(rows: Sequence[QueueInfo], controller_count: int) -> bool:
+    def expires(row: QueueInfo) -> bool:
         arguments = row["arguments"]
+        # RabbitMQ validates x-expires as an integer; other arguments may have
+        # arbitrary AMQP field values.
         if isinstance(arguments, dict):
-            return arguments.get("x-expires", 0) > 0
+            return cast(int, arguments.get("x-expires", 0)) > 0
         # RabbitMQ 3.12's CLI serializes AMQP field tables as typed triples.
-        return any(key == "x-expires" and value > 0 for key, _, value in arguments)
+        return any(
+            key == "x-expires" and cast(int, value) > 0 for key, _, value in arguments
+        )
 
     quorum = controller_count // 2 + 1
     durable = [row for row in rows if row["durable"]]
@@ -32,18 +82,19 @@ def queue_replicas_ready(rows, controller_count):
     )
 
 
-def volume_hosts(proxy):
+def volume_hosts(proxy: BlockStorageProxy) -> set[str]:
     # Older OpenStack SDKs lack the services resource wrapper.
     response = proxy.get("/os-services", params={"binary": "cinder-volume"})
     response.raise_for_status()
+    services: list[_VolumeService] = response.json()["services"]
     return {
         row["host"].split("@", 1)[0]
-        for row in response.json()["services"]
+        for row in services
         if row["state"] == "up" and row["status"] == "enabled"
     }
 
 
-def check(context, unavailable=None):
+def check(context: Context, unavailable: str | None = None) -> list[str]:
     """Read live state. This does not inject failures or create workloads."""
     if not context.controller:
         raise ValueError("Run deployment readiness on a controller")
@@ -59,9 +110,9 @@ def check(context, unavailable=None):
     expected_computes = {
         node.name for node in context.deployment.nodes if node.name != unavailable
     }
-    failures = []
+    failures: list[str] = []
 
-    def verify(name, function):
+    def verify(name: str, function: Callable[[], bool]) -> None:
         try:
             if not function():
                 failures.append(name)
@@ -100,8 +151,8 @@ def check(context, unavailable=None):
         == {f"rabbit@{name}" for name in expected_controllers},
     )
 
-    def queues():
-        rows = json.loads(
+    def queues() -> bool:
+        rows: list[QueueInfo] = json.loads(
             common.run(
                 "rabbitmqctl",
                 [
@@ -138,8 +189,10 @@ def check(context, unavailable=None):
         == expected_controllers,
     )
 
-    def placement_groups():
-        status = json.loads(common.run("ceph", ["status", "--format", "json"]))
+    def placement_groups() -> bool:
+        status: _CephStatus = json.loads(
+            common.run("ceph", ["status", "--format", "json"])
+        )
         pgs = status["pgmap"].get("pgs_by_state", [])
         allowed = (
             {"active", "clean"}
@@ -168,8 +221,10 @@ def check(context, unavailable=None):
             continue
         for port, database in ((6641, "OVN_Northbound"), (6642, "OVN_Southbound")):
 
-            def connected(node=node, port=port, database=database):
-                result = json.loads(
+            def connected(
+                node: Node = node, port: int = port, database: str = database
+            ) -> bool:
+                result: list[_OVNQueryResult] = json.loads(
                     common.run(
                         "ovsdb-client",
                         [
@@ -198,8 +253,8 @@ def check(context, unavailable=None):
 
             verify(f"OVN {database} on {node.name}", connected)
 
-    def chassis():
-        rows = json.loads(
+    def chassis() -> bool:
+        rows: list[list[str]] = json.loads(
             common.run(
                 "ovn-sbctl",
                 [
@@ -216,12 +271,12 @@ def check(context, unavailable=None):
         } == expected_computes
 
     verify("OVN compute host identities", chassis)
-    masters = []
+    masters: list[str] = []
     for node in context.deployment.controllers:
         if node.name == unavailable:
             continue
 
-        def sentinel(node=node):
+        def sentinel(node: Node = node) -> bool:
             masters.append(coordination.master_address(context, node.address))
             return coordination.check_quorum(context, node.address)
 
@@ -245,13 +300,19 @@ def check(context, unavailable=None):
     from regress_stack.modules import keystone
 
     try:
-        connection = keystone.o7k()
+        connection: Connection = keystone.o7k()
     except Exception:
         failures.append("OpenStack client authentication")
         return failures
-    verify("Keystone authentication", lambda: bool(connection.authorize()))
 
-    def computes():
+    def authenticates() -> bool:
+        # The SDK's authorize() returns the token but lacks annotations.
+        authorize: Callable[[], str] = connection.authorize
+        return bool(authorize())
+
+    verify("Keystone authentication", authenticates)
+
+    def computes() -> bool:
         rows = list(connection.compute.services(binary="nova-compute"))
         return {
             row.host for row in rows if row.state == "up" and row.status == "enabled"
@@ -263,15 +324,16 @@ def check(context, unavailable=None):
         "Cinder volume registration",
         lambda: volume_hosts(connection.block_storage) == expected_controllers,
     )
-    for name, service, method in (
-        ("compute API", "compute", "flavors"),
-        ("image API", "image", "images"),
-        ("network API", "network", "networks"),
-        ("volume API", "block_storage", "volumes"),
-    ):
+    api_queries: tuple[tuple[str, Callable[[], Iterable[object]]], ...] = (
+        ("compute API", lambda: connection.compute.flavors()),
+        ("image API", lambda: connection.image.images()),
+        ("network API", lambda: connection.network.networks()),
+        ("volume API", lambda: connection.block_storage.volumes()),
+    )
+    for name, query in api_queries:
 
-        def responds(service=service, method=method):
-            list(getattr(getattr(connection, service), method)())
+        def responds(query: Callable[[], Iterable[object]] = query) -> bool:
+            list(query())
             return True
 
         verify(name, responds)

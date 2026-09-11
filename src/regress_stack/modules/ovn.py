@@ -170,20 +170,20 @@ def _add_iptable_postrouting_rule(cidr: str, comment: str) -> None:
         core_utils.run(executable, ["--append", *rule_def])
 
 
-def local_connection():
+def local_connection() -> str:
     from regress_stack.core.deployment import current
 
     return "unix:/var/run/openvswitch/db.sock" if current() else OVSDB_CONNECTION
 
 
-def nb_connection():
+def nb_connection() -> str:
     from regress_stack.core.deployment import current
     from regress_stack.multinode.networking import connections
 
     return connections(current(), 6641) if current() else OVNNB_CONNECTION
 
 
-def sb_connection():
+def sb_connection() -> str:
     from regress_stack.core.deployment import current
     from regress_stack.multinode.networking import connections
 

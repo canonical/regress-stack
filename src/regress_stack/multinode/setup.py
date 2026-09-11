@@ -1,6 +1,9 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator
 import contextlib
 import fcntl
 import functools
@@ -9,6 +12,7 @@ import logging
 import os
 from pathlib import Path
 import socket
+from typing import TYPE_CHECKING, TypedDict
 import uuid
 
 from regress_stack.core import profiles, utils
@@ -25,12 +29,28 @@ from regress_stack.multinode import (
     storage,
 )
 
+if TYPE_CHECKING:
+    from typing import ParamSpec, TypeVar
+
+    P = ParamSpec("P")
+    R = TypeVar("R")
+
 
 LOCAL_STATE = common.STATE / "context.json"
 
 
+class _AddressInfo(TypedDict, total=False):
+    local: str
+    scope: str
+
+
+class _InterfaceInfo(TypedDict):
+    ifname: str
+    addr_info: list[_AddressInfo]
+
+
 @contextlib.contextmanager
-def quiet_context(context, *, bootstrap_only=True):
+def quiet_context(context: Context, *, bootstrap_only: bool = True) -> Iterator[None]:
     # Third-party HTTP debug logging can contain authentication request bodies.
     levels = {
         name: logging.getLogger(name).level
@@ -50,12 +70,14 @@ def quiet_context(context, *, bootstrap_only=True):
             logging.getLogger(name).setLevel(level)
 
 
-def local_preflight(context):
+def local_preflight(context: Context) -> None:
     if os.geteuid() != 0:
         raise RuntimeError("Explicit setup must run as root on the target VM")
     if socket.gethostname().split(".")[0] != context.local.name:
         raise RuntimeError("Local hostname does not match the inventory")
-    interfaces = json.loads(common.run("ip", ["-j", "address", "show"]))
+    interfaces: list[_InterfaceInfo] = json.loads(
+        common.run("ip", ["-j", "address", "show"])
+    )
     by_name = {interface["ifname"]: interface for interface in interfaces}
     local = context.local
     if (
@@ -83,8 +105,11 @@ def local_preflight(context):
 
 
 def run(
-    inventory: Path = None, node: str = None, seed: Path = None, export: Path = None
-):
+    inventory: Path | None = None,
+    node: str | None = None,
+    seed: Path | None = None,
+    export: Path | None = None,
+) -> Context:
     if (inventory is None) == (seed is None):
         raise ValueError("Supply either --inventory and --node, or --preseed")
     if seed:
@@ -98,6 +123,7 @@ def run(
     else:
         if not node or not export:
             raise ValueError("Bootstrap requires --node and --export-preseeds")
+        assert inventory is not None  # Validated exclusive inventory/preseed above.
         deployment = Deployment.read(inventory)
         context = Context(deployment, node, str(uuid.uuid4()))
         if not context.bootstrap:
@@ -160,16 +186,17 @@ def run(
                 utils.mark_setup(f"regress_stack.modules.{module.name}")
             # Export only after all deployment resources and shared keys exist.
             if context.bootstrap:
+                assert export is not None  # Required for bootstrap above.
                 context.export(export, preseed.contributions(context))
             common.mark("local-setup")
     return context
 
 
-def with_local_context(function):
+def with_local_context(function: Callable[P, R]) -> Callable[P, R]:
     """Use the saved deployment credentials for the existing Tempest command."""
 
     @functools.wraps(function)
-    def wrapped(*args, **kwargs):
+    def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
         if not LOCAL_STATE.exists():
             return function(*args, **kwargs)
         context = Context.read(LOCAL_STATE)

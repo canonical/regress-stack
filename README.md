@@ -69,7 +69,7 @@ The following modules are available on [Sunbeam](https://github.com/canonical/sn
 
 ## Multinode testing
 
-Explicit Noble/Caracal profiles, node-specific preseeds, and deployment readiness
+Explicit deployment profiles, node-specific preseeds, and deployment readiness
 are described in [the multinode guide](docs/multinode.md). The guide separates
 local setup, deployment readiness, and external HA acceptance.
 

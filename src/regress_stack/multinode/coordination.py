@@ -3,9 +3,14 @@
 
 """Redis protocol coordination with native Sentinel failover."""
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlencode
+
+import apt_pkg
 
 from regress_stack.core import apt
 from regress_stack.core.deployment import Context, Secret
@@ -15,11 +20,12 @@ from regress_stack.multinode import common
 PORT = 6379
 SENTINEL_PORT = 26379
 MASTER = "regress-stack"
+IMPLEMENTATIONS: tuple[Literal["valkey", "redis"], ...] = ("valkey", "redis")
 
 
-def implementation() -> str:
+def implementation() -> Literal["valkey", "redis"]:
     cache = apt.get_cache()
-    for name in ("valkey", "redis"):
+    for name in IMPLEMENTATIONS:
         names = (f"{name}-server", f"{name}-sentinel")
         if all(package in cache and cache[package].candidate for package in names):
             return name
@@ -34,17 +40,18 @@ def sentinel_auth_supported() -> bool:
         raise RuntimeError(
             "Tooz must be installed before generating coordination state"
         )
-    return apt.apt_pkg.version_compare(version, "6.0.0") >= 0
+    comparison: int = apt_pkg.version_compare(version, "6.0.0")
+    return comparison >= 0
 
 
-def packages(context: Context):
+def packages(context: Context) -> list[str]:
     name = context.values.get("coordination/implementation") or implementation()
-    if name not in ("valkey", "redis"):
+    if name not in IMPLEMENTATIONS:
         raise ValueError("Unsupported coordination implementation")
     return [f"{name}-server", f"{name}-sentinel", f"{name}-tools", "python3-redis"]
 
 
-def contribute(context: Context):
+def contribute(context: Context) -> dict[str, Secret]:
     recipients = frozenset(node.name for node in context.deployment.controllers)
     return {
         key: Secret(context.secret(key), recipients)
@@ -73,7 +80,7 @@ def connection_url(context: Context) -> str:
     return f"redis://:{password}@{nodes[0].address}:{SENTINEL_PORT}?{urlencode(query)}"
 
 
-def configuration(context: Context):
+def configuration(context: Context) -> tuple[str, str]:
     password = common.token(context.secret("coordination/password"))
     sentinel_password = context.secret("coordination/sentinel-password")
     server = [
@@ -115,7 +122,7 @@ def configuration(context: Context):
     return "\n".join(server) + "\n", "\n".join(sentinel) + "\n"
 
 
-def setup():
+def setup() -> None:
     context = common.context()
     if common.done("coordination"):
         # Sentinel rewrites the configuration after election. Do not reinstate
@@ -151,7 +158,7 @@ def setup():
     common.mark("coordination")
 
 
-def _sentinel_command(context: Context, command: str, host=None) -> str:
+def _sentinel_command(context: Context, command: str, host: str | None = None) -> str:
     name = context.secret("coordination/implementation")
     packages(context)
     env = dict(os.environ)
@@ -175,11 +182,11 @@ def _sentinel_command(context: Context, command: str, host=None) -> str:
     )
 
 
-def check_quorum(context: Context, host=None) -> bool:
+def check_quorum(context: Context, host: str | None = None) -> bool:
     return _sentinel_command(context, "ckquorum", host).startswith("OK ")
 
 
-def master_address(context: Context, host=None) -> str:
+def master_address(context: Context, host: str | None = None) -> str:
     output = _sentinel_command(context, "get-master-addr-by-name", host)
     values = output.splitlines()
     if (
@@ -191,7 +198,7 @@ def master_address(context: Context, host=None) -> str:
     return values[0]
 
 
-def check_members(context: Context, unavailable=None) -> bool:
+def check_members(context: Context, unavailable: str | None = None) -> bool:
     nodes = [
         node for node in context.deployment.controllers if node.name != unavailable
     ]

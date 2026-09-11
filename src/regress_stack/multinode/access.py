@@ -1,8 +1,11 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+from __future__ import annotations
+
 from pathlib import Path
 
+from regress_stack.core.deployment import Context
 from regress_stack.multinode import common
 
 
@@ -23,7 +26,7 @@ API_PORTS = (
 )
 
 
-def configuration(context):
+def configuration(context: Context) -> str:
     nodes = context.deployment.controllers
     result = [
         "global",
@@ -62,7 +65,7 @@ def configuration(context):
     return "\n".join(result) + "\n"
 
 
-def keepalived_configuration(context):
+def keepalived_configuration(context: Context) -> str:
     peers = "\n".join(
         f"        {node.address}"
         for node in context.deployment.controllers
@@ -100,7 +103,7 @@ vrrp_instance regress_stack {{
 """
 
 
-def setup():
+def setup() -> None:
     context = common.context()
     helpers = Path("/usr/local/lib/regress-stack")
     helpers.mkdir(parents=True, exist_ok=True)

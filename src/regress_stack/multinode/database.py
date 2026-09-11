@@ -1,10 +1,13 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+from __future__ import annotations
+
+from regress_stack.core.deployment import Context
 from regress_stack.multinode import common
 
 
-def configuration(context):
+def configuration(context: Context) -> str:
     nodes = context.deployment.controllers
     config = {
         "bind-address": context.local.address,
@@ -47,7 +50,7 @@ def configuration(context):
     )
 
 
-def setup():
+def setup() -> None:
     context = common.context()
     if common.done("mysql"):
         return
@@ -92,7 +95,7 @@ SET GLOBAL super_read_only=ON;
     common.mark("mysql")
 
 
-def ensure_service(name):
+def ensure_service(name: str) -> tuple[str, str]:
     context = common.context()
     name = common.token(name)
     password = common.token(context.secret(f"mysql/{name}"))

@@ -1,12 +1,23 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+from __future__ import annotations
+
 import json
+from typing import TypedDict
 
 from regress_stack.multinode import common
 
 
-def setup():
+class _Vhost(TypedDict):
+    name: str
+
+
+class _User(TypedDict):
+    user: str
+
+
+def setup() -> None:
     context = common.context()
     if common.done("rabbitmq"):
         return
@@ -39,7 +50,7 @@ def setup():
         common.run("rabbitmqctl", ["start_app"])
         common.run("rabbitmq-queues", ["grow", f"rabbit@{context.local.name}", "all"])
     else:
-        vhosts = json.loads(
+        vhosts: list[_Vhost] = json.loads(
             common.run("rabbitmqctl", ["list_vhosts", "--formatter", "json"])
         )
         if not any(vhost["name"] == "openstack" for vhost in vhosts):
@@ -47,12 +58,12 @@ def setup():
     common.mark("rabbitmq")
 
 
-def ensure_service(name):
+def ensure_service(name: str) -> tuple[str, str]:
     context = common.context()
     name = common.token(name)
     password = common.token(context.secret(f"rabbitmq/{name}"))
     if context.bootstrap:
-        users = json.loads(
+        users: list[_User] = json.loads(
             common.run("rabbitmqctl", ["list_users", "--formatter", "json"])
         )
         if not any(user["user"] == name for user in users):

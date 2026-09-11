@@ -1,6 +1,8 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+from __future__ import annotations
+
 from pathlib import Path
 import shutil
 import re
@@ -20,7 +22,7 @@ CONFIGS = {
 }
 
 
-def stop_unconfigured():
+def stop_unconfigured() -> None:
     # Package postinsts start daemons before they have usable configuration.
     # Their restart loops pull RabbitMQ back up while its cookie is replaced.
     units = common.run(
@@ -42,7 +44,7 @@ APACHE_CONFIG_DIRS = (
 )
 
 
-def limit_wsgi_workers(name):
+def limit_wsgi_workers(name: str) -> None:
     # Service worker options do not control mod_wsgi process counts.
     for directory in APACHE_CONFIG_DIRS:
         for config in directory.glob("*.conf"):
@@ -62,7 +64,7 @@ def limit_wsgi_workers(name):
                 config.write_text(updated)
 
 
-def prepare(name):
+def prepare(name: str) -> None:
     """Set multinode options before the existing module configures and starts."""
     context = common.context()
     if context.controller:
@@ -128,7 +130,7 @@ def prepare(name):
         )
 
 
-def finish(name):
+def finish(name: str) -> None:
     if name == "neutron":
         networking.metadata()
     if name == "cinder":

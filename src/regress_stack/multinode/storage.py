@@ -1,11 +1,16 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+from __future__ import annotations
+
+from collections.abc import Mapping
 import json
 from pathlib import Path
 import shutil
+from typing import TypedDict
 import uuid
 
+from regress_stack.core.deployment import Context
 from regress_stack.multinode import common
 
 
@@ -30,14 +35,19 @@ CAPABILITIES = {
 }
 
 
-def keyring(name, key, caps=None):
+class _OSDIdentity(TypedDict):
+    uuid: str
+    key: str
+
+
+def keyring(name: str, key: str, caps: Mapping[str, str] | None = None) -> str:
     output = f"[{name}]\n    key = {key}\n"
     for service, cap in (caps or {}).items():
         output += f'    caps {service} = "{cap}"\n'
     return output
 
 
-def configuration(context):
+def configuration(context: Context) -> str:
     nodes = context.deployment.controllers
     size = len(nodes)
     return f"""[global]
@@ -54,7 +64,7 @@ osd crush chooseleaf type = 1
 """
 
 
-def setup():
+def setup() -> None:
     context = common.context()
     common.write("/etc/ceph/ceph.conf", configuration(context), mode=0o644)
     for pool, user in (("volumes", "nova"), ("images", "glance")):
@@ -161,14 +171,14 @@ def setup():
                 )
 
 
-def setup_osd(slot):
+def setup_osd(slot: int) -> None:
     if common.done(f"ceph-osd-{slot}"):
         return
     record = common.STATE / f"osd-{slot}.json"
     from regress_stack.core.deployment import private_read
 
     if record.exists():
-        identity = json.loads(private_read(record))
+        identity: _OSDIdentity = json.loads(private_read(record))
     else:
         identity = {
             "uuid": str(uuid.uuid4()),

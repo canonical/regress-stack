@@ -29,7 +29,7 @@ CINDER_PRIVSEP_HELPER = (
 _TEMPEST_SERVICE_TYPE_VERSION = (42, 0, 0)
 
 
-def get_service_type():
+def get_service_type() -> str:
     from regress_stack.core.deployment import current
 
     context = current()

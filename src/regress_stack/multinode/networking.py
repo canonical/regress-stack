@@ -1,18 +1,21 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+from __future__ import annotations
+
 from pathlib import Path
 
+from regress_stack.core.deployment import Context
 from regress_stack.multinode import common
 
 
-def connections(context, port):
+def connections(context: Context, port: int) -> str:
     return ",".join(
         f"tcp:{node.address}:{port}" for node in context.deployment.controllers
     )
 
 
-def central_options(context):
+def central_options(context: Context) -> str:
     local = context.local.address
     options = [f"--db-{db}-addr={local}" for db in ("nb", "sb")]
     for db in ("nb", "sb"):
@@ -31,7 +34,7 @@ def central_options(context):
     return " ".join(options)
 
 
-def setup():
+def setup() -> None:
     context = common.context()
     if context.controller and not common.done("ovn-central"):
         common.run("systemctl", ["stop", "ovn-central"])
@@ -98,7 +101,7 @@ def setup():
     common.restart("ovn-host")
 
 
-def provider_links():
+def provider_links() -> None:
     context = common.context()
     common.write(
         "/etc/systemd/system/regress-stack-provider.service",
@@ -123,7 +126,7 @@ WantedBy=multi-user.target
     common.restart("regress-stack-provider")
 
 
-def metadata():
+def metadata() -> None:
     context = common.context()
     from regress_stack.modules import neutron, utils, ovn
 

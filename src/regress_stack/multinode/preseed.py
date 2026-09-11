@@ -1,14 +1,17 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+from __future__ import annotations
+
 import base64
 import dataclasses
 import json
 import os
+from pathlib import Path
 import secrets
 import uuid
 
-from regress_stack.core.deployment import Secret, private_write
+from regress_stack.core.deployment import Context, Secret, private_write
 from regress_stack.multinode import common, coordination, storage
 
 
@@ -26,8 +29,8 @@ SERVICES = (
 )
 
 
-def generate(context):
-    values = {}
+def generate(context: Context) -> None:
+    values: dict[str, str] = {}
     for prefix in ("mysql", "rabbitmq", "keystone"):
         for service in SERVICES:
             values[f"{prefix}/{service}"] = secrets.token_hex(24)
@@ -77,7 +80,7 @@ def generate(context):
     context.values.update(values)
 
 
-def contributions(context):
+def contributions(context: Context) -> dict[str, Secret]:
     """Give controllers their setup state and computes only their client state."""
     controllers = frozenset(node.name for node in context.deployment.controllers)
     all_nodes = frozenset(node.name for node in context.deployment.nodes)
@@ -90,7 +93,7 @@ def contributions(context):
         "ceph/client.volumes",
         "cinder/service-type",
     }
-    result = {}
+    result: dict[str, Secret] = {}
     for key, value in context.values.items():
         if key.startswith("coordination/"):
             continue
@@ -103,7 +106,7 @@ def contributions(context):
     return result
 
 
-def save(context, path):
+def save(context: Context, path: Path) -> None:
     private_write(
         path,
         json.dumps(

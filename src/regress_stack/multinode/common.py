@@ -3,6 +3,9 @@
 
 """Local recipe primitives; no peer command execution or file transport."""
 
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
 import json
 import os
 from pathlib import Path
@@ -28,7 +31,15 @@ class CommandError(subprocess.CalledProcessError, RuntimeError):
     """A subprocess failure retaining only the executable and exit status."""
 
 
-def run(command: str, args=(), *, input=None, env=None, cwd=None, timeout=120) -> str:
+def run(
+    command: str,
+    args: Sequence[str] = (),
+    *,
+    input: str | None = None,
+    env: Mapping[str, str] | None = None,
+    cwd: str | os.PathLike[str] | None = None,
+    timeout: float | None = 120,
+) -> str:
     """Run locally without logging arguments, stdin, or command output.
 
     SQL, service configuration, and errors may contain credentials. Exceptions
@@ -59,7 +70,12 @@ def run(command: str, args=(), *, input=None, env=None, cwd=None, timeout=120) -
     return result.stdout
 
 
-def write(path, content, user="root", mode=0o600):
+def write(
+    path: str | os.PathLike[str],
+    content: str,
+    user: str = "root",
+    mode: int = 0o600,
+) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     private_write(path, content)
@@ -67,15 +83,22 @@ def write(path, content, user="root", mode=0o600):
     path.chmod(mode)
 
 
-def restart(*units):
+def restart(*units: str) -> None:
     run("systemctl", ["enable", *units])
     run("systemctl", ["restart", *units])
 
 
-def sql(statement: str, host=None, user=None, password=None) -> str:
+def sql(
+    statement: str,
+    host: str | None = None,
+    user: str | None = None,
+    password: str | None = None,
+) -> str:
     args = ["--batch", "--skip-column-names", "--connect-timeout=10"]
     env = None
     if host:
+        if user is None or password is None:
+            raise ValueError("Remote MySQL queries require a user and password")
         args += ["--host", host, "--user", user]
         env = {**os.environ, "MYSQL_PWD": password}
     return run("mysql", args, input=statement, env=env)
@@ -87,7 +110,7 @@ def token(value: str) -> str:
     return value
 
 
-def wait_for(check, description, timeout=120):
+def wait_for(check: Callable[[], bool], description: str, timeout: float = 120) -> None:
     deadline = time.monotonic() + timeout
     while True:
         try:
@@ -100,11 +123,11 @@ def wait_for(check, description, timeout=120):
         time.sleep(2)
 
 
-def done(name):
+def done(name: str) -> bool:
     return (STATE / f"{name}.json").exists()
 
 
-def mark(name):
+def mark(name: str) -> None:
     write(
         STATE / f"{name}.json", json.dumps({"deployment_id": context().deployment_id})
     )
