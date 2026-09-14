@@ -1,6 +1,11 @@
 regress-stack (0.3.0) UNRELEASED; urgency=medium
 
   * d/control: add click as build dependency.
+  * d/control: add python3-click-man to Build-Depends-Indep.
+  * d/rules: generate manpages at build time with click-man.
+  * d/python3-regress-stack.lintian-overrides: removed, manpage is
+    now generated (closes: #33).
+  * pyproject.toml: bump version to 0.3.0 to match debian/changelog.
 
  -- Guillaume Boutry <guillaume.boutry@canonical.com>  Tue, 16 Sep 2025 13:14:47 +0200
 
