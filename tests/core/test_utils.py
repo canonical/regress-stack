@@ -102,3 +102,22 @@ def test_parse_tempest_version_accepts_missing_patch():
         1,
         0,
     )
+
+
+def test_multinode_system_preserves_unbounded_execution(monkeypatch):
+    monkeypatch.setattr("regress_stack.core.deployment.current", lambda: object())
+    runner = mock.Mock(return_value="")
+    monkeypatch.setattr("regress_stack.multinode.common.run", runner)
+
+    assert regress_stack.core.utils.system("tempest run", {"A": "B"}, "/work") == 0
+    runner.assert_called_once_with(
+        "sh", ["-c", "tempest run"], env={"A": "B"}, cwd="/work", timeout=None
+    )
+
+
+def test_multinode_system_preserves_failure_status(monkeypatch):
+    monkeypatch.setattr("regress_stack.core.deployment.current", lambda: object())
+    runner = mock.Mock(side_effect=subprocess.CalledProcessError(3, ["sh"]))
+    monkeypatch.setattr("regress_stack.multinode.common.run", runner)
+
+    assert regress_stack.core.utils.system("tempest run") == 3

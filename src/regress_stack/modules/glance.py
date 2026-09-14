@@ -50,9 +50,7 @@ def setup():
             "keystone_authtoken", keystone.authtoken_service(username, password)
         ),
         ("DEFAULT", "workers", "1"),
-        ("DEFAULT", "enabled_backends", "fs:file"),
-        ("glance_store", "default_backend", "fs"),
-        ("fs", "filesystem_store_datadir", "/var/lib/glance/images/"),
+        *_store_config(),
     )
     _disable_strict_image_format_validation()
     if barbican.installed():
@@ -63,7 +61,7 @@ def setup():
                 "key_manager", barbican.key_manager_cfg()
             ),
         )
-    core_utils.sudo("glance-manage", ["db_sync"], user=SERVICE)
+    module_utils.bootstrap_sudo("glance-manage", ["db_sync"], user=SERVICE)
     core_utils.restart_service("glance-api")
 
 
@@ -76,3 +74,21 @@ def ensure_image(name: str, filepath: pathlib.Path, **kwargs):
     return conn.image.create_image(
         name=name, filename=str(filepath), wait=True, **kwargs
     )
+
+
+def _store_config():
+    from regress_stack.core.deployment import current
+
+    if current():
+        return [
+            ("DEFAULT", "enabled_backends", "ceph:rbd"),
+            ("glance_store", "default_backend", "ceph"),
+            ("ceph", "rbd_store_pool", "images"),
+            ("ceph", "rbd_store_user", "images"),
+            ("ceph", "rbd_store_ceph_conf", "/etc/ceph/ceph.conf"),
+        ]
+    return [
+        ("DEFAULT", "enabled_backends", "fs:file"),
+        ("glance_store", "default_backend", "fs"),
+        ("fs", "filesystem_store_datadir", "/var/lib/glance/images/"),
+    ]

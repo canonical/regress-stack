@@ -44,5 +44,5 @@ def setup():
             "keystone_authtoken", keystone.authtoken_service(username, password)
         ),
     )
-    core_utils.sudo("placement-manage", ["db", "sync"], user="placement")
+    module_utils.bootstrap_sudo("placement-manage", ["db", "sync"], user="placement")
     core_utils.restart_apache()

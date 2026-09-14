@@ -139,9 +139,13 @@ def setup():
             "enforce_new_defaults",
             "false" if _barbican_plugin_needs_img_dir() else "true",
         ),
-        ("simple_crypto_plugin", "kek", SIMPLE_CRYPTO_KEK),
+        (
+            "simple_crypto_plugin",
+            "kek",
+            module_utils.preseed_value("barbican/kek", SIMPLE_CRYPTO_KEK),
+        ),
     )
-    core_utils.sudo(
+    module_utils.bootstrap_sudo(
         "barbican-manage",
         ["--config-file", CONF, "db", "upgrade"],
         user=SERVICE,

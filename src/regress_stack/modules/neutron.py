@@ -119,8 +119,8 @@ def setup():
         *module_utils.dict_to_cfg_set_args(
             "ovn",
             {
-                "ovn_nb_connection": ovn.OVNNB_CONNECTION,
-                "ovn_sb_connection": ovn.OVNSB_CONNECTION,
+                "ovn_nb_connection": ovn.nb_connection(),
+                "ovn_sb_connection": ovn.sb_connection(),
                 "ovn_l3_scheduler": "leastloaded",
                 "ovn_metadata_enabled": "true",
                 "enable_distributed_floating_ip": "true",
@@ -131,11 +131,11 @@ def setup():
     module_utils.cfg_set(
         METADATA_AGENT_CONF,
         ("DEFAULT", "nova_metadata_host", core_utils.fqdn()),
-        ("DEFAULT", "metadata_proxy_shared_secret", METADATA_SECRET),
-        ("ovs", "ovsdb_connection", ovn.OVSDB_CONNECTION),
-        ("ovn", "ovn_sb_connection", ovn.OVNSB_CONNECTION),
+        ("DEFAULT", "metadata_proxy_shared_secret", metadata_secret()),
+        ("ovs", "ovsdb_connection", ovn.local_connection()),
+        ("ovn", "ovn_sb_connection", ovn.sb_connection()),
     )
-    core_utils.sudo(
+    module_utils.bootstrap_sudo(
         "neutron-db-manage",
         ["--config-file", CONF, "--config-file", ML2_CONF, "upgrade", "head"],
         user="neutron",
@@ -160,6 +160,9 @@ def setup():
     for _daemon in neutron_daemons:
         core_utils.restart_service(_daemon)
     core_utils.restart_service("neutron-ovn-metadata-agent")
+
+    if not module_utils.bootstrap():
+        return
 
     # wait for neutron-server to accept http connections
     for _ in range(10):
@@ -197,11 +200,23 @@ def ensure_public_network():
         gw = hosts[0]
         first_host = hosts[1]
         last_host = hosts[-2]
+        from regress_stack.core.deployment import current
+
+        context = current()
+        cidr = ovn.EXTERNAL_CIDR
+        if context:
+            provider = context.deployment.provider
+            cidr = provider.cidr
+            gw, first_host, last_host = (
+                provider.gateway,
+                provider.allocation_start,
+                provider.allocation_end,
+            )
         conn.network.create_subnet(
             name="external-subnet",
             network_id=network.id,
             ip_version=4,
-            cidr=ovn.EXTERNAL_CIDR,
+            cidr=cidr,
             gateway_ip=str(gw),
             allocation_pools=[{"start": str(first_host), "end": str(last_host)}],
             enable_dhcp=False,
@@ -273,3 +288,10 @@ def ensure_subnet_router(subnet, router):
         LOG.debug("Reattaching port %r to router %r...", port.name, router)
         conn.network.remove_interface_from_router(port.device_id, port_id=port.id)
         conn.network.add_interface_to_router(router, port_id=port.id)
+
+
+def metadata_secret():
+    from regress_stack.core.deployment import current
+
+    context = current()
+    return context.secret("neutron/metadata") if context else METADATA_SECRET

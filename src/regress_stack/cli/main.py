@@ -4,6 +4,7 @@
 import click
 import logging
 
+from regress_stack.cli import ready as ready_module
 from regress_stack.cli import plan as plan_module
 from regress_stack.cli import setup as setup_module
 from regress_stack.cli import test as test_module
@@ -22,6 +23,7 @@ def main():
 
 
 # Register all commands
+main.add_command(ready_module.ready)
 main.add_command(plan_module.plan)
 main.add_command(setup_module.setup)
 main.add_command(test_module.test)

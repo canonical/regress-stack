@@ -29,7 +29,12 @@ CINDER_PRIVSEP_HELPER = (
 _TEMPEST_SERVICE_TYPE_VERSION = (42, 0, 0)
 
 
-def get_service_type():
+def get_service_type() -> str:
+    from regress_stack.core.deployment import current
+
+    context = current()
+    if context and "cinder/service-type" in context.values:
+        return context.values["cinder/service-type"]
     version = core_utils.tempest_version()
     if version is not None and version >= _TEMPEST_SERVICE_TYPE_VERSION:
         return _SERVICE_TYPE
@@ -37,6 +42,10 @@ def get_service_type():
 
 
 def installed() -> bool:
+    from regress_stack.core.deployment import current
+
+    if current() is not None:
+        return True
     return core_apt.pkgs_installed(PACKAGES)
 
 
@@ -86,7 +95,7 @@ def setup():
                 "rbd_max_clone_depth": "5",
                 "rbd_store_chunk_size": "4",
                 "rbd_exclusive_cinder_pool": "true",
-                "backend_host": f"{SERVICE}@{core_utils.fqdn()}",
+                "backend_host": _backend_host(),
             },
         ),
     )
@@ -99,7 +108,7 @@ def setup():
                 "key_manager", barbican.key_manager_cfg()
             ),
         )
-    core_utils.sudo("cinder-manage", ["db", "sync"], SERVICE)
+    module_utils.bootstrap_sudo("cinder-manage", ["db", "sync"], SERVICE)
     core_utils.restart_apache()
     core_utils.restart_service("cinder-scheduler")
     core_utils.restart_service("cinder-volume")
@@ -140,3 +149,44 @@ def _ensure_sudo_rs_rootwrap() -> None:
     CINDER_SUDOERS.write_text(contents)
     CINDER_SUDOERS.chmod(0o440)
     core_utils.run("visudo", ["-cf", str(CINDER_SUDOERS)])
+
+
+def _backend_host():
+    from regress_stack.core.deployment import current
+
+    return current().local.name if current() else f"{SERVICE}@{core_utils.fqdn()}"
+
+
+def configure_tempest(tempest_conf: pathlib.Path):
+    if get_service_type() != _SERVICE_TYPE:
+        return
+    # Packaged python-tempestconf versions that only recognize volumev3
+    # disable Cinder discovery when the catalog uses block-storage.
+    proxy = keystone.o7k().block_storage
+    endpoint = proxy.get_endpoint_data()
+    services = proxy.get("/os-services", params={"binary": "cinder-backup"})
+    services.raise_for_status()
+    pools = proxy.get("/scheduler-stats/get_pools")
+    pools.raise_for_status()
+    backends = sorted(
+        {
+            pool["name"].split("@", 1)[1].split("#", 1)[0]
+            for pool in pools.json()["pools"]
+        }
+    )
+    backup = any(
+        service["state"] == "up" and service["status"] == "enabled"
+        for service in services.json()["services"]
+    )
+    options = [
+        ("service_available", "cinder", "True"),
+        ("volume", "catalog_type", _SERVICE_TYPE),
+        ("volume", "backend_names", ",".join(backends)),
+        ("volume-feature-enabled", "multi_backend", str(len(backends) > 1)),
+        ("volume-feature-enabled", "backup", str(backup)),
+    ]
+    for name in ("min_microversion", "max_microversion"):
+        version = getattr(endpoint, name)
+        if version is not None:
+            options.append(("volume", name, ".".join(map(str, version))))
+    module_utils.cfg_set(str(tempest_conf), *options)

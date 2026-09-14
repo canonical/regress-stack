@@ -84,35 +84,41 @@ def setup():
         ("cache", "expiration_time", "600"),
     )
     LOG.debug("Running keystone-manage db_sync...")
-    core_utils.sudo(
+    module_utils.bootstrap_sudo(
         "keystone-manage",
         ["--config-dir", "/etc/keystone", "db_sync"],
         user="keystone",
     )
-    opts = "--keystone-user", "keystone", "--keystone-group", "keystone"
-    LOG.debug("Running bootstrapping keystone...")
-    core_utils.run("keystone-manage", ["fernet_setup", *opts])
-    core_utils.run("keystone-manage", ["credential_setup", *opts])
-    core_utils.run(
-        "keystone-manage",
-        [
-            "bootstrap",
-            "--bootstrap-password",
-            ADMIN_PASSWORD,
-            "--bootstrap-admin-url",
-            OS_AUTH_URL,
-            "--bootstrap-internal-url",
-            OS_AUTH_URL,
-            "--bootstrap-public-url",
-            OS_AUTH_URL,
-            "--bootstrap-region-id",
-            utils.REGION,
-        ],
-    )
+    if module_utils.bootstrap():
+        opts = "--keystone-user", "keystone", "--keystone-group", "keystone"
+        LOG.debug("Running bootstrapping keystone...")
+        core_utils.run("keystone-manage", ["fernet_setup", *opts])
+        core_utils.run("keystone-manage", ["credential_setup", *opts])
+        core_utils.run(
+            "keystone-manage",
+            [
+                "bootstrap",
+                "--bootstrap-password",
+                admin_password(),
+                "--bootstrap-admin-url",
+                auth_url(),
+                "--bootstrap-internal-url",
+                auth_url(),
+                "--bootstrap-public-url",
+                auth_url(),
+                "--bootstrap-region-id",
+                utils.REGION,
+            ],
+        )
     core_utils.restart_apache()
     authrc = auth_rc()
-    print(authrc)
-    pathlib.Path("~/auth.rc").expanduser().write_text(authrc)
+    from regress_stack.core.deployment import current, private_write
+
+    if current() is None:
+        print(authrc)
+        pathlib.Path("~/auth.rc").expanduser().write_text(authrc)
+    else:
+        private_write(pathlib.Path("~/auth.rc").expanduser(), authrc)
     domain = ensure_domain(SERVICE_DOMAIN)
     ensure_project(SERVICE_PROJECT, domain.id)
     ensure_role("_member_")
@@ -121,11 +127,11 @@ def setup():
 def auth_env() -> typing.Dict[str, str]:
     return {
         "OS_USERNAME": ADMIN_USERNAME,
-        "OS_PASSWORD": ADMIN_PASSWORD,
+        "OS_PASSWORD": admin_password(),
         "OS_PROJECT_NAME": ADMIN_PROJECT,
         "OS_USER_DOMAIN_NAME": DEFAULT_DOMAIN_NAME,
         "OS_PROJECT_DOMAIN_NAME": DEFAULT_DOMAIN_NAME,
-        "OS_AUTH_URL": OS_AUTH_URL,
+        "OS_AUTH_URL": auth_url(),
         "OS_IDENTITY_API_VERSION": "3",
         "OS_REGION_NAME": utils.REGION,
     }
@@ -133,7 +139,7 @@ def auth_env() -> typing.Dict[str, str]:
 
 def account_dict(service: str, password: str) -> typing.Dict[str, str]:
     return {
-        "auth_url": OS_AUTH_URL,
+        "auth_url": auth_url(),
         "auth_type": "password",
         "project_domain_name": SERVICE_DOMAIN,
         "user_domain_name": SERVICE_DOMAIN,
@@ -147,7 +153,7 @@ def account_dict(service: str, password: str) -> typing.Dict[str, str]:
 def authtoken_service(service: str, password: str) -> typing.Dict[str, str]:
     return {
         **account_dict(service, password),
-        "www_authenticate_uri": OS_AUTH_URL,
+        "www_authenticate_uri": auth_url(),
         "service_token_roles": "admin",
         "service_token_roles_required": "true",
     }
@@ -159,8 +165,20 @@ def auth_rc():
 
 @functools.lru_cache()
 def o7k():
+    from regress_stack.core.deployment import current, bootstrap_only
+
     os.environ.update(auth_env())
-    conn = openstack.connect(load_envvars=True)
+    context = current()
+    options = {}
+    if context and context.controller and bootstrap_only():
+        # Planned peers can have package-default API listeners before joining.
+        # Setup must consume the services it has configured on this machine.
+        options = {
+            "auth_url": f"http://{context.local.address}:5000/v3/",
+            "identity_endpoint_override": f"http://{context.local.address}:5000/v3/",
+            "network_endpoint_override": f"http://{context.local.address}:9696/v2.0",
+        }
+    conn = openstack.connect(load_envvars=True, **options)
     return conn
 
 
@@ -177,6 +195,8 @@ def ensure_domain(name: str):
     if domain:
         return domain
     LOG.debug("Creating domain %r...", name)
+    if not module_utils.bootstrap():
+        raise RuntimeError("Bootstrap identity resource is missing")
     return conn.identity.create_domain(name=name)
 
 
@@ -206,6 +226,8 @@ def ensure_project(name: str, domain: str):
     if project:
         return project
     LOG.debug("Creating project %r...", name)
+    if not module_utils.bootstrap():
+        raise RuntimeError("Bootstrap identity resource is missing")
     return conn.identity.create_project(name=name, domain_id=domain)
 
 
@@ -225,7 +247,12 @@ def ensure_service_account(name: str, type: str, url: str) -> typing.Tuple[str, 
     Returns:
         Tuple of (username, password).
     """
-    password = "changeme"
+    from regress_stack.core.deployment import current
+
+    context = current()
+    password = context.secret(f"keystone/{name}") if context else "changeme"
+    if context and not context.bootstrap:
+        return name, password
 
     user = ensure_user(name, password, service_domain())
     ensure_admin(user, service_project())
@@ -242,6 +269,8 @@ def ensure_user(name, password, domain):
     if user:
         return user
     LOG.debug("Creating user %r...", name)
+    if not module_utils.bootstrap():
+        raise RuntimeError("Bootstrap identity resource is missing")
     return conn.identity.create_user(name=name, password=password, domain_id=domain)
 
 
@@ -258,10 +287,14 @@ def ensure_role(name: str):
     if role:
         return role
     LOG.debug("Creating role %r...", name)
+    if not module_utils.bootstrap():
+        raise RuntimeError("Bootstrap identity resource is missing")
     return conn.identity.create_role(name=name)
 
 
 def ensure_admin(user, project):
+    if not module_utils.bootstrap():
+        return
     conn = o7k()
     LOG.debug("Ensuring user %r is admin of project %r...", user.name, project)
 
@@ -275,6 +308,8 @@ def ensure_service(name: str, type: str):
     if service:
         return service
     LOG.debug("Creating service %r...", name)
+    if not module_utils.bootstrap():
+        raise RuntimeError("Bootstrap identity resource is missing")
     return conn.identity.create_service(name=name, type=type)
 
 
@@ -292,6 +327,9 @@ def _ensure_endpoint_interface(
 
 
 def ensure_endpoint(service, url: str):
+    if not module_utils.bootstrap():
+        return
+    url = module_utils.endpoint(url)
     conn = o7k()
     LOG.debug("Ensuring endpoints %r exists...", service.name)
     endpoints = list(conn.identity.endpoints(service_id=service.id))
@@ -303,6 +341,8 @@ def ensure_endpoint(service, url: str):
 
 
 def grant_domain_role(user, role, domain):
+    if not module_utils.bootstrap():
+        return
     conn = o7k()
     LOG.debug("Granting role %r to user %r...", role, user)
     try:
@@ -316,6 +356,8 @@ def grant_domain_role(user, role, domain):
 
 
 def grant_project_role(user, role, project):
+    if not module_utils.bootstrap():
+        return
     conn = o7k()
     LOG.debug("Granting role %r to user %r...", role, user)
     try:
@@ -326,3 +368,14 @@ def grant_project_role(user, role, project):
             project.assign_role_to_user(conn.identity, user, role)
         else:
             raise e
+
+
+def auth_url():
+    return module_utils.endpoint(OS_AUTH_URL)
+
+
+def admin_password():
+    from regress_stack.core.deployment import current
+
+    context = current()
+    return context.secret("keystone/admin") if context else ADMIN_PASSWORD

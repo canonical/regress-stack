@@ -26,6 +26,10 @@ GRANT ALL PRIVILEGES ON {name}.* TO '{database}'@'%';
 
 
 def get_host():
+    from regress_stack.core.deployment import current
+
+    if current() is not None:
+        return "127.0.0.1:13306"
     return "localhost"
 
 
@@ -44,6 +48,12 @@ def ensure_service(name: str) -> typing.Tuple[str, str]:
     Returns:
         Tuple of (username, password).
     """
+    from regress_stack.core.deployment import current
+
+    if current() is not None:
+        from regress_stack.multinode.database import ensure_service as clustered_service
+
+        return clustered_service(name)
     password = "changeme"
 
     ensure_database(name)

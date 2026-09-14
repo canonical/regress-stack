@@ -67,6 +67,12 @@ The following modules are available on [Sunbeam](https://github.com/canonical/sn
 - **Ceilometer**
 - **Gnocchi**
 
+## Multinode testing
+
+Explicit deployment profiles, node-specific preseeds, and deployment readiness
+are described in [the multinode guide](docs/multinode.md). The guide separates
+local setup, deployment readiness, and external HA acceptance.
+
 ## Contributing
 
 We welcome contributions from the community! If you have ideas for new features or improvements, feel free to open an issue or submit a pull request.

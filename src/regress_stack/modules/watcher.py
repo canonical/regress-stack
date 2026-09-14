@@ -63,7 +63,7 @@ def setup():
     for service in SERVICES:
         core_utils.run("systemctl", ["stop", service])
 
-    core_utils.sudo("watcher-db-manage", ["upgrade"], user=SERVICE)
+    module_utils.bootstrap_sudo("watcher-db-manage", ["upgrade"], user=SERVICE)
     for service in SERVICES:
         core_utils.restart_service(service)
         core_utils.run("systemctl", ["is-active", "--quiet", service])
