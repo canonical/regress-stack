@@ -10,6 +10,7 @@ RELEASES=${RELEASES:-$(curl -s https://api.launchpad.net/devel/ubuntu/series | \
                                 .status == "Pre-release Freeze")) | .name')}
 PROPOSED=${APT_POCKETS:-"false true"}
 PPA=${APT_PPAS:-"false ppa:ubuntu-security-proposed/ppa"}
+PPA_PRIORITY=${APT_PPA_PRIORITY:-500}
 for codename in $RELEASES; do
     for proposed in $PROPOSED; do
         for ppa in $PPA; do
@@ -27,6 +28,7 @@ for codename in $RELEASES; do
           environment:
             APT_ENABLE_PROPOSED: ${proposed}
             APT_ENABLE_PPA: ${ppa}
+            APT_PPA_PRIORITY: ${PPA_PRIORITY}
 EOSYSTEM
         done
     done

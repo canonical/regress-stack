@@ -32,7 +32,21 @@ prepare: |
     fi
   fi
   if [ "${APT_ENABLE_PPA:-false}" != false ]; then
-    add-apt-repository -y $APT_ENABLE_PPA
+    ppa_priority=${APT_PPA_PRIORITY:-600}
+    if ! [[ "$ppa_priority" =~ ^-?[0-9]+$ ]]; then
+      echo "APT_PPA_PRIORITY must be an integer: $ppa_priority" >&2
+      exit 1
+    fi
+    add-apt-repository -y "$APT_ENABLE_PPA"
+    # Launchpad omits the archive name from the origin for the default "ppa".
+    ppa_slug=${APT_ENABLE_PPA#ppa:}
+    ppa_slug=${ppa_slug%/ppa}
+    ppa_slug=${ppa_slug//\//-}
+    cat <<EOF > "/etc/apt/preferences.d/pin-${ppa_slug}"
+  Package: *
+  Pin: release o=LP-PPA-${ppa_slug}
+  Pin-Priority: ${ppa_priority}
+  EOF
   fi
   PACKAGES="
     build-essential \

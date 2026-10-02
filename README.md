@@ -67,6 +67,24 @@ The following modules are available on [Sunbeam](https://github.com/canonical/sn
 - **Ceilometer**
 - **Gnocchi**
 
+## PPA priority in `spread` tests
+
+When running `spread`, set `APT_PPA_PRIORITY` to control the priority of packages
+from the PPA selected by `APT_PPAS` when generating the configuration with
+`boot.sh`. For example, test UCA Hibiscus staging on Resolute:
+
+```bash
+APT_PPA_PRIORITY=500 RELEASES=resolute APT_POCKETS=true APT_PPAS=ppa:ubuntu-cloud-archive/hibiscus-staging ./boot.sh
+spread
+```
+
+Packages are installed from different sources depending on the [priority values](https://manpages.ubuntu.com/manpages/focal/man5/apt_preferences.5.html). Typical values are:
+
+- `1001`: Force PPA versions over Ubuntu packages, including downgrades.
+- `600`: Prefer the PPA over proposed without forcing downgrades of installed packages.
+- `500`: Give the PPA the same priority as `proposed` and select the newest version.
+- `400`: Prefer Ubuntu packages and use the PPA for packages unavailable in Ubuntu.
+
 ## Contributing
 
 We welcome contributions from the community! If you have ideas for new features or improvements, feel free to open an issue or submit a pull request.
