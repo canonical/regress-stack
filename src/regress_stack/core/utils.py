@@ -138,8 +138,27 @@ def restart_service(*services: str):
     run("systemctl", ["restart", *services])
 
 
+def has_service(service: str) -> bool:
+    """Check if a systemd unit named ``service`` is present."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "cat", service],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return result.returncode == 0
+    except OSError:
+        return False
+
+
 def restart_apache():
     restart_service("apache2")
+
+
+def graceful_apache():
+    """Gracefully reload apache2 (WSGI workers) without dropping connections."""
+    run("systemctl", ["reload", "apache2"])
 
 
 def enable_service(service: str):
