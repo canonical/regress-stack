@@ -115,6 +115,16 @@ def _ensure_questing_compat() -> None:
     )
 
 
+def configure_tempest(tempest_conf):
+    """Force cinder=True so tempest runs volume tests.
+
+    Older python3-tempestconf (< 3.5.4) only detects the legacy 'volumev3'
+    service type, leaving service_available.cinder unset and skipping every
+    volume test.
+    """
+    module_utils.cfg_set(str(tempest_conf), ("service_available", "cinder", "True"))
+
+
 def _using_sudo_rs() -> bool:
     result = subprocess.run(
         ["sudo", "-V"],

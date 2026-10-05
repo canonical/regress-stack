@@ -86,6 +86,22 @@ def test_ensure_sudo_rs_rootwrap(tmp_path, monkeypatch):
     assert warnings
 
 
+def test_configure_tempest_sets_cinder_available(tmp_path, monkeypatch):
+    cfg_calls = []
+    tempest_conf = tmp_path / "tempest.conf"
+    monkeypatch.setattr(
+        cinder.module_utils,
+        "cfg_set",
+        lambda config, *args: cfg_calls.append((config, args)),
+    )
+
+    cinder.configure_tempest(tempest_conf)
+
+    assert cfg_calls == [
+        (str(tempest_conf), (("service_available", "cinder", "True"),))
+    ]
+
+
 def test_ensure_questing_compat(monkeypatch):
     cfg_calls = []
     compat_calls = []
