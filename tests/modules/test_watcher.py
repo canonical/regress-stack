@@ -75,6 +75,18 @@ def test_setup_configures_and_starts_services(monkeypatch):
         "run",
         lambda command, args: service_events.append(("run", command, args)),
     )
+    # Hibiscus: the standalone watcher-api unit is retired (WSGI under apache2),
+    # while the decision engine and applier remain standalone daemons.
+    monkeypatch.setattr(
+        watcher.core_utils,
+        "has_service",
+        lambda service: service != "watcher-api",
+    )
+    monkeypatch.setattr(
+        watcher.core_utils,
+        "graceful_apache",
+        lambda: service_events.append(("graceful-apache",)),
+    )
 
     watcher.setup()
 
@@ -95,11 +107,12 @@ def test_setup_configures_and_starts_services(monkeypatch):
         )
     ]
     assert service_events == [
-        *[("run", "systemctl", ["stop", service]) for service in watcher.SERVICES],
+        *[("run", "systemctl", ["stop", service]) for service in watcher.SERVICES[1:]],
         ("sudo", "watcher-db-manage", ["upgrade"], watcher.SERVICE),
+        ("graceful-apache",),
         *[
             event
-            for service in watcher.SERVICES
+            for service in watcher.SERVICES[1:]
             for event in (
                 ("restart", service),
                 ("run", "systemctl", ["is-active", "--quiet", service]),
@@ -122,7 +135,11 @@ def test_configure_tempest_enables_watcher(tmp_path, monkeypatch):
     assert cfg_calls == [
         (
             str(tempest_conf),
-            (("service_available", "watcher", "True"),),
+            (
+                ("service_available", "watcher", "True"),
+                ("optimize", "min_microversion", "1.0"),
+                ("optimize", "max_microversion", "latest"),
+            ),
         )
     ]
     assert watcher.TEST_INCLUDE_REGEXES == [r"watcher_tempest_plugin.tests.api"]
