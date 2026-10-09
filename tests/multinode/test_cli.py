@@ -66,6 +66,64 @@ def test_local_setup_message_does_not_claim_readiness(monkeypatch):
     assert "after all nodes have joined" in result.output
 
 
+def test_tempest_refuses_implicit_explicit_state(tmp_path, monkeypatch):
+    from regress_stack.cli import test as test_cli
+
+    state = tmp_path / "context.json"
+    state.write_text("{}")
+    monkeypatch.setattr(test_cli, "LOCAL_STATE", state)
+    run = Mock(side_effect=AssertionError("must not run Tempest"))
+    monkeypatch.setattr(test_cli, "run_tempest", run)
+    result = CliRunner().invoke(main, ["test"])
+    assert result.exit_code != 0
+    assert "--state" in result.output
+    run.assert_not_called()
+
+
+def test_tempest_legacy_mode_collects_logs(tmp_path, monkeypatch):
+    from regress_stack.cli import test as test_cli
+    from regress_stack.core.deployment import current
+
+    monkeypatch.setattr(test_cli, "LOCAL_STATE", tmp_path / "missing.json")
+    seen = []
+    monkeypatch.setattr(
+        test_cli,
+        "run_tempest",
+        lambda *args, **kwargs: seen.append((current(), kwargs)),
+    )
+    result = CliRunner().invoke(main, ["test"])
+    assert result.exit_code == 0, result.output
+    assert seen == [(None, {"collect_failure_logs": True})]
+
+
+@pytest.mark.parametrize("local_name", ["node1", "compute1"])
+def test_tempest_explicit_state_runs_on_controllers_only(
+    context, tmp_path, monkeypatch, local_name
+):
+    from regress_stack.cli import test as test_cli
+    from regress_stack.core.deployment import current
+
+    local = dataclasses.replace(context, local_name=local_name)
+    state = tmp_path / "context.json"
+    setup.preseed.save(local, state)
+    seen = []
+    monkeypatch.setattr(
+        test_cli,
+        "run_tempest",
+        lambda *args, **kwargs: seen.append((current(), kwargs)),
+    )
+    result = CliRunner().invoke(main, ["test", "--state", str(state)])
+    if local_name == "compute1":
+        assert result.exit_code != 0
+        assert "controller" in result.output
+        assert seen == []
+        return
+    assert result.exit_code == 0, result.output
+    [(active, options)] = seen
+    assert active.local_name == "node1"
+    assert options == {"collect_failure_logs": False}
+
+
 def test_runtime_resources_can_be_created_on_surviving_controller(peer):
     with activate(peer):
         assert not utils.bootstrap()

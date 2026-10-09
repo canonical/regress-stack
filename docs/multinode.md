@@ -131,10 +131,11 @@ minimum size 2, and host-level CRUSH placement.
 
    ```sh
    sudo regress-stack ready
-   sudo regress-stack test
+   sudo regress-stack test --state /var/lib/regress-stack/multinode/context.json
    ```
 
-   Tempest uses the locally saved deployment credentials. Controller `auth.rc`
+   Tempest uses the locally saved deployment credentials. Without `--state`,
+   `test` refuses to run on a machine with explicit deployment state. Controller `auth.rc`
    files are private. A compute-only preseed contains no database recovery,
    Keystone administrator, Ceph administrator, or coordination credentials.
 

@@ -57,7 +57,8 @@ case "$1" in
         python3 -m regress_stack ready
         ;;
     test)
-        python3 -m regress_stack test --concurrency 2
+        python3 -m regress_stack test \
+            --state /var/lib/regress-stack/multinode/context.json --concurrency 2
         ;;
     *)
         echo "Unknown guest phase" >&2

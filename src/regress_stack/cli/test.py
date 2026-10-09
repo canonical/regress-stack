@@ -10,11 +10,12 @@ import subprocess
 
 import regress_stack.modules
 from regress_stack.core import utils
+from regress_stack.core.deployment import Context, private_write
 from regress_stack.core.modules import get_execution_order
 from regress_stack.modules import keystone
 from regress_stack.modules import utils as module_utils
 from regress_stack.cli.utils import collect_logs
-from regress_stack.multinode.setup import with_local_context
+from regress_stack.multinode.setup import LOCAL_STATE, quiet_context
 
 LOG = logging.getLogger(__name__)
 
@@ -35,11 +36,33 @@ LOG = logging.getLogger(__name__)
     default=0,
     help="Number of times to retry failed tests, defaults to 0 (no retries).",
 )
+@click.option(
+    "--state",
+    type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path),
+    help="Run against an explicit deployment using its saved local state.",
+)
 @utils.measure_time
-@with_local_context
-def test(concurrency, retry_failed):
+def test(concurrency, retry_failed, state):
     """Run the regression tests using Tempest."""
+    if state is None:
+        if LOCAL_STATE.exists():
+            raise click.UsageError(
+                f"This machine has explicit deployment state; pass --state {LOCAL_STATE}"
+            )
+        run_tempest(concurrency, retry_failed, collect_failure_logs=True)
+        return
+    try:
+        context = Context.read(state)
+    except (ValueError, OSError) as error:
+        raise click.ClickException(str(error)) from None
+    if not context.controller:
+        raise click.ClickException("Run Tempest from a controller")
+    with quiet_context(context, bootstrap_only=False):
+        # Legacy log collection prints unfiltered service logs.
+        run_tempest(concurrency, retry_failed, collect_failure_logs=False)
 
+
+def run_tempest(concurrency, retry_failed, collect_failure_logs: bool) -> None:
     env = os.environ.copy()
     env.update(keystone.auth_env())
     dir_name = "mycloud01"
@@ -59,8 +82,6 @@ def test(concurrency, retry_failed):
     # openstack.connect(cloud=...) which works on all versions.
     clouds_yaml = pathlib.Path(dir_name) / "clouds.yaml"
     auth = keystone.auth_env()
-    from regress_stack.core.deployment import private_write
-
     private_write(
         clouds_yaml,
         "clouds:\n"
@@ -187,9 +208,7 @@ def test(concurrency, retry_failed):
             # Collect logs after the last retry to avoid collecting logs
             # multiple times in case of multiple retries.
             if retries > retry_failed:
-                from regress_stack.core.deployment import current
-
-                if current() is None:
+                if collect_failure_logs:
                     collect_logs()
                 raise
             else:

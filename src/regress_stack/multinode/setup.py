@@ -3,16 +3,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 import contextlib
 import fcntl
-import functools
 import json
 import logging
 import os
 from pathlib import Path
 import socket
-from typing import TYPE_CHECKING, TypedDict
+from typing import TypedDict
 import uuid
 
 from regress_stack.core import profiles, utils
@@ -28,13 +27,6 @@ from regress_stack.multinode import (
     services,
     storage,
 )
-
-if TYPE_CHECKING:
-    from typing import ParamSpec, TypeVar
-
-    P = ParamSpec("P")
-    R = TypeVar("R")
-
 
 LOCAL_STATE = common.STATE / "context.json"
 
@@ -192,19 +184,3 @@ def run(
                 context.export(export, preseed.contributions(context))
             common.mark("local-setup")
     return context
-
-
-def with_local_context(function: Callable[P, R]) -> Callable[P, R]:
-    """Use the saved deployment credentials for the existing Tempest command."""
-
-    @functools.wraps(function)
-    def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
-        if not LOCAL_STATE.exists():
-            return function(*args, **kwargs)
-        context = Context.read(LOCAL_STATE)
-        if not context.controller:
-            raise RuntimeError("Run Tempest from a controller")
-        with quiet_context(context, bootstrap_only=False):
-            return function(*args, **kwargs)
-
-    return wrapped
