@@ -3,12 +3,11 @@
 
 import click
 from pathlib import Path
-import uuid
 
 import regress_stack.modules
-from regress_stack.core.deployment import Context, Deployment
-from regress_stack.multinode.profiles import packages as local_packages
 from regress_stack.core.modules import get_execution_order
+from regress_stack.multinode import profiles
+from regress_stack.multinode import setup as multinode_setup
 
 
 @click.command("packages")
@@ -33,22 +32,13 @@ def packages(target=None, no_tempest=False, inventory=None, node=None, preseed=N
         apt install $(regress-stack packages nova)
     """
     if inventory or node or preseed:
-        if (
-            target
-            or (inventory is None) == (preseed is None)
-            or (inventory and not node)
-            or (preseed and node)
-        ):
+        if target:
             raise click.UsageError(
-                "Use --inventory with --node, or --preseed, without TARGET"
+                "Explicit profiles list a complete local role; omit TARGET"
             )
         try:
-            context = (
-                Context.read(preseed)
-                if preseed
-                else Context(Deployment.read(inventory), node, str(uuid.uuid4()))
-            )
-            click.echo(" ".join(local_packages(context, no_tempest=no_tempest)))
+            context = multinode_setup.load(inventory, node, preseed)
+            click.echo(" ".join(profiles.packages(context, no_tempest=no_tempest)))
         except (ValueError, RuntimeError, OSError) as error:
             raise click.ClickException(str(error)) from None
         return

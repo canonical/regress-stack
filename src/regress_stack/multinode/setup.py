@@ -63,6 +63,30 @@ def quiet_context(context: Context, *, bootstrap_only: bool = True) -> Iterator[
             logging.getLogger(name).setLevel(level)
 
 
+def load(
+    inventory: Path | None = None,
+    node: str | None = None,
+    seed: Path | None = None,
+) -> Context:
+    """A validated context from an inventory and node name, or a preseed."""
+    if seed is not None:
+        if inventory is not None or node is not None:
+            raise ValueError("Use --inventory with --node, or --preseed")
+        return read_state(seed)
+    if inventory is None or node is None:
+        raise ValueError("Use --inventory with --node, or --preseed")
+    return _validated(Context(Deployment.read(inventory), node, str(uuid.uuid4())))
+
+
+def read_state(path: Path) -> Context:
+    return _validated(Context.read(path))
+
+
+def _validated(context: Context) -> Context:
+    profiles.validate(context.deployment)
+    return context
+
+
 def local_preflight(context: Context) -> None:
     if os.geteuid() != 0:
         raise RuntimeError("Explicit setup must run as root on the target VM")
@@ -94,7 +118,7 @@ def local_preflight(context: Context) -> None:
         raise RuntimeError(
             "Explicit setup requires a fresh VM, not an existing legacy deployment"
         )
-    profiles.execution_order(context)
+    profiles.verify_installed(context)
 
 
 def run(
@@ -103,22 +127,15 @@ def run(
     seed: Path | None = None,
     export: Path | None = None,
 ) -> Context:
-    if (inventory is None) == (seed is None):
-        raise ValueError("Supply either --inventory and --node, or --preseed")
-    if seed:
-        if node or export:
-            raise ValueError(
-                "Join preseeds already identify the node and cannot export peers"
-            )
-        context = Context.read(seed)
+    context = load(inventory, node, seed)
+    if seed is not None:
+        if export is not None:
+            raise ValueError("Join preseeds cannot export peer preseeds")
         if context.is_bootstrap:
             raise ValueError("Use the inventory for bootstrap, not a join preseed")
     else:
-        if not node or not export:
+        if export is None:
             raise ValueError("Bootstrap requires --node and --export-preseeds")
-        assert inventory is not None  # Validated exclusive inventory/preseed above.
-        deployment = Deployment.read(inventory)
-        context = Context(deployment, node, str(uuid.uuid4()))
         if not context.is_bootstrap:
             raise ValueError("An inventory can only bootstrap its first controller")
     # These validations happen before changing machine configuration.
@@ -128,7 +145,7 @@ def run(
     with (common.STATE / "setup.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if LOCAL_STATE.exists():
-            saved = Context.read(LOCAL_STATE)
+            saved = read_state(LOCAL_STATE)
             if (
                 saved.deployment != context.deployment
                 or saved.local_name != context.local_name
@@ -165,22 +182,14 @@ def run(
             if "ceph" not in context.deployment.disabled_modules:
                 storage.setup()
             networking.setup()
-            for module in profiles.execution_order(context, check_packages=False):
-                if module.name in {"utils", "mysql", "rabbitmq", "ceph", "ovn"}:
+            for module in profiles.local_modules(context):
+                if module.configure is None or common.done(f"service-{module.name}"):
                     continue
-                if common.done(f"service-{module.name}"):
-                    continue
-                if module.name == "neutron" and not context.is_controller:
-                    services.metadata_agent()
-                else:
-                    services.prepare(module.name)
-                    module.module.setup()
-                    services.finish(module.name)
+                module.configure(module.name)
                 common.mark(f"service-{module.name}")
                 utils.mark_setup(f"regress_stack.modules.{module.name}")
             # Export only after all deployment resources and shared keys exist.
-            if context.is_bootstrap:
-                assert export is not None  # Required for bootstrap above.
+            if export is not None:
                 context.export(export, preseed.contributions(context))
             common.mark("local-setup")
     return context

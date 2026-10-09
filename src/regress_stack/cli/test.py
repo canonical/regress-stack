@@ -10,12 +10,12 @@ import subprocess
 
 import regress_stack.modules
 from regress_stack.core import utils
-from regress_stack.core.deployment import Context, private_write
+from regress_stack.core.deployment import private_write
 from regress_stack.core.modules import get_execution_order
 from regress_stack.modules import keystone
 from regress_stack.modules import utils as module_utils
 from regress_stack.cli.utils import collect_logs
-from regress_stack.multinode.setup import LOCAL_STATE, quiet_context
+from regress_stack.multinode.setup import LOCAL_STATE, quiet_context, read_state
 
 LOG = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def test(concurrency, retry_failed, state):
         run_tempest(concurrency, retry_failed, collect_failure_logs=True)
         return
     try:
-        context = Context.read(state)
+        context = read_state(state)
     except (ValueError, OSError) as error:
         raise click.ClickException(str(error)) from None
     if not context.is_controller:

@@ -5,9 +5,8 @@ from pathlib import Path
 
 import click
 
-from regress_stack.core.deployment import Context
 from regress_stack.multinode import readiness
-from regress_stack.multinode.setup import LOCAL_STATE, quiet_context
+from regress_stack.multinode.setup import LOCAL_STATE, quiet_context, read_state
 
 
 @click.command()
@@ -21,7 +20,7 @@ from regress_stack.multinode.setup import LOCAL_STATE, quiet_context
 def ready(state, unavailable_node):
     """Check live deployment membership and API readiness on a controller."""
     try:
-        context = Context.read(state)
+        context = read_state(state)
         with quiet_context(context, bootstrap_only=False):
             failures = readiness.check(context, unavailable_node)
     except (ValueError, RuntimeError, OSError) as error:

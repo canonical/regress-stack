@@ -41,13 +41,16 @@ def test_compute_has_only_local_client_packages(deployment):
         "nova-api",
         "ceph-mon",
     }
-    modules = profiles.execution_order(context, check_packages=False)
+    modules = profiles.local_modules(context)
     assert [module.name for module in modules].index("neutron") < [
         module.name for module in modules
     ].index("nova")
     nova = next(module for module in modules if module.name == "nova")
     assert "rabbitmq" in nova.shared_dependencies
     assert "rabbitmq" not in nova.local_dependencies
+    assert nova.configure is not None
+    neutron = next(module for module in modules if module.name == "neutron")
+    assert neutron.configure is profiles.services.configure_metadata_agent
 
 
 def test_explicit_profile_fails_on_missing_local_package(deployment, monkeypatch):
@@ -56,7 +59,7 @@ def test_explicit_profile_fails_on_missing_local_package(deployment, monkeypatch
         profiles.apt, "pkgs_installed", lambda packages: "nova-compute" not in packages
     )
     with pytest.raises(RuntimeError, match="Missing local packages: nova-compute"):
-        profiles.execution_order(context)
+        profiles.verify_installed(context)
 
 
 def test_controllers_have_identical_package_requirements(deployment):
@@ -129,7 +132,7 @@ def test_optional_services_can_be_excluded_from_hyperconverged_profile(deploymen
             str(uuid.uuid4()),
             {"coordination/implementation": "valkey"},
         )
-        names = {module.name for module in profiles.execution_order(context, False)}
+        names = {module.name for module in profiles.local_modules(context)}
         assert {"nova", "neutron", "ovn"} <= names
         assert not names & {"heat", "magnum", "watcher"}
         packages = profiles.packages(context)
@@ -139,8 +142,10 @@ def test_optional_services_can_be_excluded_from_hyperconverged_profile(deploymen
 
 
 def test_heat_cannot_be_excluded_while_magnum_is_enabled(deployment):
-    with pytest.raises(ValueError, match="requires disabling magnum"):
-        Deployment(**{**deployment.__dict__, "disabled_modules": ("heat",)})
+    with pytest.raises(ValueError, match="Disabling heat requires disabling magnum"):
+        profiles.validate(
+            Deployment(**{**deployment.__dict__, "disabled_modules": ("heat",)})
+        )
 
 
 def test_control_profile_can_omit_storage_and_optional_services(deployment):
@@ -167,7 +172,7 @@ def test_control_profile_can_omit_storage_and_optional_services(deployment):
             str(uuid.uuid4()),
             {"coordination/implementation": "valkey"},
         )
-        names = {module.name for module in profiles.execution_order(context, False)}
+        names = {module.name for module in profiles.local_modules(context)}
         assert not names & set(scoped.disabled_modules)
         assert {"nova", "neutron", "ovn"} <= names
         packages = profiles.packages(context)
@@ -179,5 +184,63 @@ def test_control_profile_can_omit_storage_and_optional_services(deployment):
 
 
 def test_ceph_cannot_be_excluded_with_cinder_enabled(deployment):
-    with pytest.raises(ValueError, match="requires disabling cinder"):
-        Deployment(**{**deployment.__dict__, "disabled_modules": ("ceph",)})
+    with pytest.raises(ValueError, match="Disabling ceph requires disabling cinder"):
+        profiles.validate(
+            Deployment(**{**deployment.__dict__, "disabled_modules": ("ceph",)})
+        )
+
+
+@pytest.mark.parametrize(
+    "disabled",
+    [("cinder", "ceph"), ("nova",), ("keystone",), ("unknown",)],
+)
+def test_only_optional_modules_and_their_dependents_can_be_disabled(
+    deployment, disabled
+):
+    with pytest.raises(ValueError):
+        profiles.validate(
+            Deployment(**{**deployment.__dict__, "disabled_modules": disabled})
+        )
+
+
+@pytest.mark.parametrize(
+    "disabled",
+    [
+        (),
+        ("barbican",),
+        ("watcher",),
+        ("heat", "magnum"),
+        ("ceph", "cinder", "magnum"),
+        ("ceph", "cinder", "barbican", "heat", "magnum", "watcher"),
+    ],
+)
+def test_supported_disabled_module_sets(deployment, disabled):
+    profiles.validate(
+        Deployment(**{**deployment.__dict__, "disabled_modules": disabled})
+    )
+
+
+def test_execution_order_is_unchanged_for_full_controllers(deployment):
+    context = Context(
+        deployment,
+        "node1",
+        str(uuid.uuid4()),
+        {"coordination/implementation": "valkey"},
+    )
+    assert [module.name for module in profiles.local_modules(context)] == [
+        "utils",
+        "ceph",
+        "mysql",
+        "keystone",
+        "ovn",
+        "placement",
+        "rabbitmq",
+        "barbican",
+        "cinder",
+        "glance",
+        "neutron",
+        "nova",
+        "heat",
+        "magnum",
+        "watcher",
+    ]

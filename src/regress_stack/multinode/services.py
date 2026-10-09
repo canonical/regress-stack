@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import importlib
 from pathlib import Path
-import shutil
 import re
+import shutil
 
 from regress_stack import topology
+from regress_stack.core.deployment import Context
 from regress_stack.modules import keystone, neutron, ovn, utils
 from regress_stack.multinode import common, coordination
 
@@ -65,6 +68,18 @@ def limit_wsgi_workers(name: str) -> None:
                 config.write_text(updated)
 
 
+def configure(name: str) -> None:
+    """Configure a service module with the multinode options around its setup."""
+    prepare(name)
+    importlib.import_module(f"regress_stack.modules.{name}").setup()
+    finish(name)
+
+
+def configure_metadata_agent(name: str) -> None:
+    """Compute nodes run only the Neutron metadata agent."""
+    metadata_agent()
+
+
 def prepare(name: str) -> None:
     """Set multinode options before the existing module configures and starts."""
     context = common.context()
@@ -77,70 +92,81 @@ def prepare(name: str) -> None:
             ("oslo_messaging_rabbit", "rabbit_quorum_queue", "true"),
             ("oslo_messaging_rabbit", "amqp_durable_queues", "true"),
         )
-    if name == "keystone":
-        common.run("systemctl", ["start", "memcached"])
-        for folder in ("fernet-keys", "credential-keys"):
-            directory = Path("/etc/keystone") / folder
-            directory.mkdir(parents=True, exist_ok=True)
-            shutil.chown(directory, user="keystone", group="keystone")
-            directory.chmod(0o700)
-            for number in ("0", "1"):
-                common.write(
-                    directory / number,
-                    context.secret(f"keystone/{folder}/{number}"),
-                    user="keystone",
-                )
-    if name == "nova":
-        utils.cfg_set(
-            CONFIGS[name], ("scheduler", "discover_hosts_in_cells_interval", "10")
-        )
-    if name == "nova" and context.runs_compute:
-        common.run("systemctl", ["start", "libvirtd"])
-        settings = [
-            # Caracal's native os-vif driver opens OVSDB without privsep.
-            # Its packaged vsctl driver uses the existing rootwrap helper.
-            ("os_vif_ovs", "ovsdb_interface", "vsctl"),
-        ]
-        if "ceph" not in context.deployment.disabled_modules:
-            settings.extend(
-                (
-                    ("libvirt", "images_type", "rbd"),
-                    ("libvirt", "images_rbd_pool", "volumes"),
-                    ("libvirt", "images_rbd_ceph_conf", "/etc/ceph/ceph.conf"),
-                )
-            )
-        utils.cfg_set(CONFIGS[name], *settings)
-    if name == "cinder":
-        utils.cfg_set(
-            CONFIGS[name],
-            ("DEFAULT", "cluster", "regress-stack"),
-            ("coordination", "backend_url", coordination.connection_url(context)),
-        )
-    if name == "cinder":
-        utils.cfg_set(
-            CONFIGS[name],
-            ("service_user", "send_service_user_token", "true"),
-            *utils.dict_to_cfg_set_args(
-                "service_user",
-                keystone.account_dict("cinder", context.secret("keystone/cinder")),
-            ),
-        )
-    if name == "heat":
-        utils.cfg_set(
-            CONFIGS[name],
-            (
-                "DEFAULT",
-                "auth_encryption_key",
-                context.secret("heat/auth_encryption_key"),
-            ),
-        )
+    if service_preparation := _PREPARATIONS.get(name):
+        service_preparation(context)
 
 
 def finish(name: str) -> None:
     if name == "neutron":
         metadata_agent()
-    if name == "cinder":
+    elif name == "cinder":
         common.restart("cinder-volume")
+
+
+def _prepare_keystone(context: Context) -> None:
+    common.run("systemctl", ["start", "memcached"])
+    for folder in ("fernet-keys", "credential-keys"):
+        directory = Path("/etc/keystone") / folder
+        directory.mkdir(parents=True, exist_ok=True)
+        shutil.chown(directory, user="keystone", group="keystone")
+        directory.chmod(0o700)
+        for number in ("0", "1"):
+            common.write(
+                directory / number,
+                context.secret(f"keystone/{folder}/{number}"),
+                user="keystone",
+            )
+
+
+def _prepare_nova(context: Context) -> None:
+    utils.cfg_set(
+        CONFIGS["nova"], ("scheduler", "discover_hosts_in_cells_interval", "10")
+    )
+    if not context.runs_compute:
+        return
+    common.run("systemctl", ["start", "libvirtd"])
+    settings = [
+        # Caracal's native os-vif driver opens OVSDB without privsep.
+        # Its packaged vsctl driver uses the existing rootwrap helper.
+        ("os_vif_ovs", "ovsdb_interface", "vsctl"),
+    ]
+    if "ceph" not in context.deployment.disabled_modules:
+        settings.extend(
+            (
+                ("libvirt", "images_type", "rbd"),
+                ("libvirt", "images_rbd_pool", "volumes"),
+                ("libvirt", "images_rbd_ceph_conf", "/etc/ceph/ceph.conf"),
+            )
+        )
+    utils.cfg_set(CONFIGS["nova"], *settings)
+
+
+def _prepare_cinder(context: Context) -> None:
+    utils.cfg_set(
+        CONFIGS["cinder"],
+        ("DEFAULT", "cluster", "regress-stack"),
+        ("coordination", "backend_url", coordination.connection_url(context)),
+        ("service_user", "send_service_user_token", "true"),
+        *utils.dict_to_cfg_set_args(
+            "service_user",
+            keystone.account_dict("cinder", context.secret("keystone/cinder")),
+        ),
+    )
+
+
+def _prepare_heat(context: Context) -> None:
+    utils.cfg_set(
+        CONFIGS["heat"],
+        ("DEFAULT", "auth_encryption_key", context.secret("heat/auth_encryption_key")),
+    )
+
+
+_PREPARATIONS: dict[str, Callable[[Context], None]] = {
+    "keystone": _prepare_keystone,
+    "nova": _prepare_nova,
+    "cinder": _prepare_cinder,
+    "heat": _prepare_heat,
+}
 
 
 def metadata_agent() -> None:

@@ -115,15 +115,9 @@ class Deployment:
         if type(self.schema) is not int or self.schema != 1:
             raise ValueError("Unsupported inventory schema")
         object.__setattr__(self, "profile", Profile(self.profile))
-        allowed_disabled = {"ceph", "cinder", "barbican", "heat", "magnum", "watcher"}
-        if not set(self.disabled_modules) <= allowed_disabled:
-            raise ValueError("Unsupported disabled module")
-        if "heat" in self.disabled_modules and "magnum" not in self.disabled_modules:
-            raise ValueError("Disabling heat also requires disabling magnum")
-        if "ceph" in self.disabled_modules and "cinder" not in self.disabled_modules:
-            raise ValueError("Disabling ceph requires disabling cinder")
-        if "cinder" in self.disabled_modules and "magnum" not in self.disabled_modules:
-            raise ValueError("Disabling cinder requires disabling magnum")
+        # multinode.profiles validates disabled_modules against its module graph.
+        if not all(isinstance(name, str) for name in self.disabled_modules):
+            raise ValueError("Disabled modules must be names")
         if len(self.controllers) not in _CONTROLLER_COUNTS[self.profile]:
             raise ValueError("Profiles require exactly one or three controllers")
         if self.profile is Profile.CONTROL and not self.computes:

@@ -165,7 +165,7 @@ def test_preflight_rejects_address_mismatch_before_package_checks(context, monke
         ),
     )
     packages = Mock(side_effect=AssertionError("must reject identity first"))
-    monkeypatch.setattr(setup.profiles, "execution_order", packages)
+    monkeypatch.setattr(setup.profiles, "verify_installed", packages)
     import pytest
 
     with pytest.raises(RuntimeError, match="Management address"):
@@ -199,14 +199,11 @@ def test_bootstrap_setup_export_is_last(context, tmp_path, monkeypatch):
         monkeypatch.setattr(
             getattr(setup, name), "setup", lambda name=name: order.append(name)
         )
-    module = SimpleNamespace(
-        name="nova", module=SimpleNamespace(setup=lambda: order.append("nova"))
-    )
-    monkeypatch.setattr(
-        setup.profiles, "execution_order", lambda *args, **kwargs: [module]
-    )
-    monkeypatch.setattr(setup.services, "prepare", Mock())
-    monkeypatch.setattr(setup.services, "finish", Mock())
+    modules = [
+        SimpleNamespace(name="mysql", configure=None),
+        SimpleNamespace(name="nova", configure=order.append),
+    ]
+    monkeypatch.setattr(setup.profiles, "local_modules", lambda _context: modules)
     monkeypatch.setattr(type(context), "export", lambda *args: order.append("export"))
     setup.run(inventory, "node1", export=tmp_path / "exports")
     assert order == [
@@ -249,7 +246,7 @@ def test_preflight_accepts_other_releases(
         ),
     )
     packages = Mock(return_value=[])
-    monkeypatch.setattr(setup.profiles, "execution_order", packages)
+    monkeypatch.setattr(setup.profiles, "verify_installed", packages)
 
     setup.local_preflight(context)
 
