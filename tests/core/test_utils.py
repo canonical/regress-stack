@@ -121,3 +121,14 @@ def test_multinode_system_preserves_failure_status(monkeypatch):
     monkeypatch.setattr("regress_stack.multinode.results.run", runner)
 
     assert regress_stack.core.utils.system("tempest run") == 3
+
+
+def test_multinode_run_preserves_unbounded_execution(monkeypatch):
+    monkeypatch.setattr("regress_stack.core.deployment.current", lambda: object())
+    runner = mock.Mock(return_value="output")
+    monkeypatch.setattr("regress_stack.multinode.common.run", runner)
+
+    assert regress_stack.core.utils.run("nova-manage", ["db", "sync"]) == "output"
+    runner.assert_called_once_with(
+        "nova-manage", ["db", "sync"], env=None, cwd=None, timeout=None
+    )

@@ -74,7 +74,8 @@ def run(
     if current() is not None:
         from regress_stack.multinode.common import run as private_run
 
-        return private_run(cmd, args, env=env, cwd=cwd)
+        # Legacy commands (migrations, image downloads) have never been bounded.
+        return private_run(cmd, args, env=env, cwd=cwd, timeout=None)
     cmd_args = [cmd]
     cmd_args.extend(args)
     try:
