@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
+import dataclasses
+import functools
 import json
 import logging
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict
@@ -111,6 +113,51 @@ def volume_hosts(proxy: _RestProxy) -> set[str]:
     }
 
 
+_DEGRADED_PG_STATES = frozenset(
+    {
+        "undersized",
+        "degraded",
+        "remapped",
+        "recovering",
+        "recovery_wait",
+        "backfilling",
+        "backfill_wait",
+    }
+)
+
+Probe = Callable[[], bool]
+
+
+@dataclasses.dataclass(frozen=True)
+class _Expected:
+    """Live state expected while the optional unavailable node is stopped."""
+
+    context: Context
+    unavailable: str | None
+
+    def _live(self, nodes: Iterable[Node]) -> list[Node]:
+        return [node for node in nodes if node.name != self.unavailable]
+
+    @property
+    def controllers(self) -> list[Node]:
+        return self._live(self.context.deployment.controllers)
+
+    @property
+    def controller_names(self) -> set[str]:
+        return {node.name for node in self.controllers}
+
+    @property
+    def chassis(self) -> set[str]:
+        return {node.name for node in self._live(self.context.deployment.nodes)}
+
+    @property
+    def computes(self) -> set[str]:
+        return {node.name for node in self._live(self.context.deployment.compute_nodes)}
+
+    def enabled(self, module: str) -> bool:
+        return module not in self.context.deployment.disabled_modules
+
+
 def check(context: Context, unavailable: str | None = None) -> list[str]:
     """Read live state. This does not inject failures or create workloads."""
     if not context.is_controller:
@@ -122,246 +169,217 @@ def check(context: Context, unavailable: str | None = None) -> list[str]:
             raise ValueError("Run readiness on a surviving node")
         if not context.deployment.highly_available:
             raise ValueError("Degraded readiness requires three controllers")
-    expected_controllers = {
-        node.name for node in context.deployment.controllers if node.name != unavailable
-    }
-    expected_chassis = {
-        node.name for node in context.deployment.nodes if node.name != unavailable
-    }
-    expected_computes = {
-        node.name
-        for node in context.deployment.compute_nodes
-        if node.name != unavailable
-    }
-    failures: list[str] = []
-
-    def verify(name: str, function: Callable[[], bool]) -> None:
-        try:
-            if not function():
-                failures.append(name)
-        except Exception as error:
-            # Authentication and service exceptions can contain credentials;
-            # record only the exception type so parsing bugs stay visible.
-            LOG.warning("%s check raised %s", name, type(error).__name__)
-            failures.append(name)
-
-    verify("local setup", lambda: common.done("local-setup"))
-    if context.deployment.highly_available:
-        expected_addresses = {
-            node.address
-            for node in context.deployment.controllers
-            if node.name != unavailable
-        }
-        verify(
-            "MySQL membership",
-            lambda: set(
-                common.sql(
-                    "SELECT MEMBER_HOST FROM performance_schema.replication_group_members WHERE MEMBER_STATE='ONLINE';"
-                ).splitlines()
-            )
-            == expected_addresses,
-        )
-    else:
-        verify(
-            "MySQL writable",
-            lambda: common.sql("SELECT @@global.read_only;").strip() == "0",
-        )
-    verify(
-        "RabbitMQ membership",
-        lambda: set(
-            json.loads(
-                common.run("rabbitmqctl", ["cluster_status", "--formatter", "json"])
-            )["running_nodes"]
-        )
-        == {f"rabbit@{name}" for name in expected_controllers},
-    )
-
-    def queues() -> bool:
-        rows: list[QueueInfo] = json.loads(
-            common.run(
-                "rabbitmqctl",
-                [
-                    "list_queues",
-                    # RabbitMQ 3.9 probes each replica for the online field;
-                    # a down node can exceed the default 60-second deadline.
-                    "--timeout",
-                    "120",
-                    "--vhost",
-                    "openstack",
-                    "name",
-                    "type",
-                    "durable",
-                    "arguments",
-                    "members",
-                    "online",
-                    "--formatter",
-                    "json",
-                ],
-            )
-        )
-        # Caracal uses classic, expiring reply/fanout queues. Durable service
-        # queues must have all planned members and a live majority.
-        return queue_replicas_ready(rows, len(context.deployment.controllers))
-
-    verify("RabbitMQ queue replicas", queues)
-    if "ceph" not in context.deployment.disabled_modules:
-        verify(
-            "Ceph monitor quorum",
-            lambda: set(
-                json.loads(common.run("ceph", ["quorum_status", "--format", "json"]))[
-                    "quorum_names"
-                ]
-            )
-            == expected_controllers,
-        )
-
-    def placement_groups() -> bool:
-        status: _CephStatus = json.loads(
-            common.run("ceph", ["status", "--format", "json"])
-        )
-        pgs = status["pgmap"].get("pgs_by_state", [])
-        allowed = (
-            {"active", "clean"}
-            if not unavailable
-            else {
-                "active",
-                "clean",
-                "undersized",
-                "degraded",
-                "remapped",
-                "recovering",
-                "recovery_wait",
-                "backfilling",
-                "backfill_wait",
-            }
-        )
-        return bool(pgs) and all(
-            "active" in pg["state_name"].split("+")
-            and set(pg["state_name"].split("+")) <= allowed
-            for pg in pgs
-        )
-
-    if "ceph" not in context.deployment.disabled_modules:
-        verify("Ceph usable placement groups", placement_groups)
-    for node in context.deployment.controllers:
-        if node.name == unavailable:
-            continue
-        for port, database in ((6641, "OVN_Northbound"), (6642, "OVN_Southbound")):
-
-            def connected(
-                node: Node = node, port: int = port, database: str = database
-            ) -> bool:
-                result: list[_OVNQueryResult] = json.loads(
-                    common.run(
-                        "ovsdb-client",
-                        [
-                            "query",
-                            f"tcp:{node.address}:{port}",
-                            json.dumps(
-                                [
-                                    "_Server",
-                                    {
-                                        "op": "select",
-                                        "table": "Database",
-                                        "where": [["name", "==", database]],
-                                        "columns": ["connected", "model"],
-                                    },
-                                ]
-                            ),
-                        ],
-                    )
-                )
-                rows = result[0]["rows"]
-                return (
-                    len(rows) == 1
-                    and rows[0]["connected"]
-                    and rows[0]["model"] == "clustered"
-                )
-
-            verify(f"OVN {database} on {node.name}", connected)
-
-    def chassis() -> bool:
-        rows: list[list[str]] = json.loads(
-            common.run(
-                "ovn-sbctl",
-                [
-                    f"--db={networking.connections(context, 6642)}",
-                    "--format=json",
-                    "--columns=name,hostname",
-                    "list",
-                    "Chassis",
-                ],
-            )
-        )["data"]
-        return {
-            name for name, hostname in rows if name == hostname and name != unavailable
-        } == expected_chassis
-
-    verify("OVN compute host identities", chassis)
-    live_controllers = [
-        node for node in context.deployment.controllers if node.name != unavailable
+    expected = _Expected(context, unavailable)
+    failures = [
+        name for name, probe in _service_checks(expected) if not _passes(name, probe)
     ]
-    for node in live_controllers:
-
-        def sentinel(node: Node = node) -> bool:
-            return coordination.check_quorum(context, node.address)
-
-        verify(f"Sentinel on {node.name}", sentinel)
-
-    def sentinel_agreement() -> bool:
-        masters = {
-            coordination.master_address(context, node.address)
-            for node in live_controllers
-        }
-        return len(masters) == 1 and masters <= {
-            node.address for node in live_controllers
-        }
-
-    verify("Sentinel primary agreement", sentinel_agreement)
-
-    verify(
-        "Redis/Valkey replication",
-        lambda: coordination.check_members(context, unavailable),
-    )
-
     try:
         connection: Connection = keystone.o7k()
     except Exception:
         failures.append("OpenStack client authentication")
         return failures
-
-    def authenticates() -> bool:
-        # The SDK's authorize() returns the token but lacks annotations.
-        authorize: Callable[[], str] = connection.authorize
-        return bool(authorize())
-
-    verify("Keystone authentication", authenticates)
-
-    def computes() -> bool:
-        rows = list(connection.compute.services(binary="nova-compute"))
-        return {
-            row.host for row in rows if row.state == "up" and row.status == "enabled"
-        } == expected_computes
-
-    verify("Nova compute registration", computes)
-
-    if "cinder" not in context.deployment.disabled_modules:
-        verify(
-            "Cinder volume registration",
-            lambda: volume_hosts(connection.block_storage) == expected_controllers,
-        )
-    api_queries: tuple[tuple[str, Callable[[], Iterable[object]]], ...] = (
-        ("compute API", lambda: connection.compute.flavors()),
-        ("image API", lambda: connection.image.images()),
-        ("network API", lambda: connection.network.networks()),
-    )
-    if "cinder" not in context.deployment.disabled_modules:
-        api_queries += (("volume API", lambda: connection.block_storage.volumes()),)
-    for name, query in api_queries:
-
-        def responds(query: Callable[[], Iterable[object]] = query) -> bool:
-            list(query())
-            return True
-
-        verify(name, responds)
+    failures += [
+        name
+        for name, probe in _api_checks(expected, connection)
+        if not _passes(name, probe)
+    ]
     return failures
+
+
+def _passes(name: str, probe: Probe) -> bool:
+    try:
+        return probe()
+    except Exception as error:
+        # Authentication and service exceptions can contain credentials;
+        # record only the exception type so parsing bugs stay visible.
+        LOG.warning("%s check raised %s", name, type(error).__name__)
+        return False
+
+
+def _service_checks(expected: _Expected) -> Iterator[tuple[str, Probe]]:
+    context = expected.context
+    yield "local setup", functools.partial(common.done, "local-setup")
+    if context.deployment.highly_available:
+        yield "MySQL membership", functools.partial(_mysql_members, expected)
+    else:
+        yield "MySQL writable", _mysql_writable
+    yield "RabbitMQ membership", functools.partial(_rabbitmq_members, expected)
+    yield "RabbitMQ queue replicas", functools.partial(_rabbitmq_queues, context)
+    if expected.enabled("ceph"):
+        yield "Ceph monitor quorum", functools.partial(_ceph_quorum, expected)
+        yield (
+            "Ceph usable placement groups",
+            functools.partial(
+                _ceph_placement_groups, degraded=expected.unavailable is not None
+            ),
+        )
+    for node in expected.controllers:
+        for port, database in ((6641, "OVN_Northbound"), (6642, "OVN_Southbound")):
+            yield (
+                f"OVN {database} on {node.name}",
+                functools.partial(_ovn_clustered, node, port, database),
+            )
+    yield "OVN compute host identities", functools.partial(_ovn_chassis, expected)
+    for node in expected.controllers:
+        yield (
+            f"Sentinel on {node.name}",
+            functools.partial(coordination.check_quorum, context, node.address),
+        )
+    yield "Sentinel primary agreement", functools.partial(_sentinel_agreement, expected)
+    yield (
+        "Redis/Valkey replication",
+        functools.partial(coordination.check_members, context, expected.unavailable),
+    )
+
+
+def _api_checks(
+    expected: _Expected, connection: Connection
+) -> Iterator[tuple[str, Probe]]:
+    # Probes resolve SDK proxies lazily: proxy creation can fail as well.
+    yield "Keystone authentication", functools.partial(_authenticates, connection)
+    yield (
+        "Nova compute registration",
+        functools.partial(_compute_hosts_registered, expected, connection),
+    )
+    if expected.enabled("cinder"):
+        yield (
+            "Cinder volume registration",
+            lambda: volume_hosts(connection.block_storage) == expected.controller_names,
+        )
+    yield "compute API", lambda: _responds(connection.compute.flavors)
+    yield "image API", lambda: _responds(connection.image.images)
+    yield "network API", lambda: _responds(connection.network.networks)
+    if expected.enabled("cinder"):
+        yield "volume API", lambda: _responds(connection.block_storage.volumes)
+
+
+def _mysql_members(expected: _Expected) -> bool:
+    members = common.sql(
+        "SELECT MEMBER_HOST FROM performance_schema.replication_group_members"
+        " WHERE MEMBER_STATE='ONLINE';"
+    ).splitlines()
+    return set(members) == {node.address for node in expected.controllers}
+
+
+def _mysql_writable() -> bool:
+    return common.sql("SELECT @@global.read_only;").strip() == "0"
+
+
+def _rabbitmq_members(expected: _Expected) -> bool:
+    status = json.loads(
+        common.run("rabbitmqctl", ["cluster_status", "--formatter", "json"])
+    )
+    return set(status["running_nodes"]) == {
+        f"rabbit@{name}" for name in expected.controller_names
+    }
+
+
+def _rabbitmq_queues(context: Context) -> bool:
+    rows: list[QueueInfo] = json.loads(
+        common.run(
+            "rabbitmqctl",
+            [
+                "list_queues",
+                # RabbitMQ 3.9 probes each replica for the online field;
+                # a down node can exceed the default 60-second deadline.
+                "--timeout",
+                "120",
+                "--vhost",
+                "openstack",
+                "name",
+                "type",
+                "durable",
+                "arguments",
+                "members",
+                "online",
+                "--formatter",
+                "json",
+            ],
+        )
+    )
+    # Caracal uses classic, expiring reply/fanout queues. Durable service
+    # queues must have all planned members and a live majority.
+    return queue_replicas_ready(rows, len(context.deployment.controllers))
+
+
+def _ceph_quorum(expected: _Expected) -> bool:
+    status = json.loads(common.run("ceph", ["quorum_status", "--format", "json"]))
+    return set(status["quorum_names"]) == expected.controller_names
+
+
+def _ceph_placement_groups(*, degraded: bool) -> bool:
+    status: _CephStatus = json.loads(common.run("ceph", ["status", "--format", "json"]))
+    pgs = status["pgmap"].get("pgs_by_state", [])
+    allowed = {"active", "clean"} | (_DEGRADED_PG_STATES if degraded else set())
+    return bool(pgs) and all(
+        "active" in pg["state_name"].split("+")
+        and set(pg["state_name"].split("+")) <= allowed
+        for pg in pgs
+    )
+
+
+def _ovn_clustered(node: Node, port: int, database: str) -> bool:
+    query = [
+        "_Server",
+        {
+            "op": "select",
+            "table": "Database",
+            "where": [["name", "==", database]],
+            "columns": ["connected", "model"],
+        },
+    ]
+    result: list[_OVNQueryResult] = json.loads(
+        common.run(
+            "ovsdb-client", ["query", f"tcp:{node.address}:{port}", json.dumps(query)]
+        )
+    )
+    rows = result[0]["rows"]
+    return len(rows) == 1 and rows[0]["connected"] and rows[0]["model"] == "clustered"
+
+
+def _ovn_chassis(expected: _Expected) -> bool:
+    rows: list[list[str]] = json.loads(
+        common.run(
+            "ovn-sbctl",
+            [
+                f"--db={networking.connections(expected.context, 6642)}",
+                "--format=json",
+                "--columns=name,hostname",
+                "list",
+                "Chassis",
+            ],
+        )
+    )["data"]
+    return {
+        name
+        for name, hostname in rows
+        if name == hostname and name != expected.unavailable
+    } == expected.chassis
+
+
+def _sentinel_agreement(expected: _Expected) -> bool:
+    masters = {
+        coordination.master_address(expected.context, node.address)
+        for node in expected.controllers
+    }
+    return len(masters) == 1 and masters <= {
+        node.address for node in expected.controllers
+    }
+
+
+def _authenticates(connection: Connection) -> bool:
+    # The SDK's authorize() returns the token but lacks annotations.
+    authorize: Callable[[], str] = connection.authorize
+    return bool(authorize())
+
+
+def _compute_hosts_registered(expected: _Expected, connection: Connection) -> bool:
+    rows = list(connection.compute.services(binary="nova-compute"))
+    return {
+        row.host for row in rows if row.state == "up" and row.status == "enabled"
+    } == expected.computes
+
+
+def _responds(query: Callable[[], Iterable[object]]) -> bool:
+    list(query())
+    return True
