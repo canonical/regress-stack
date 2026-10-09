@@ -55,7 +55,7 @@ def test(concurrency, retry_failed, state):
         context = Context.read(state)
     except (ValueError, OSError) as error:
         raise click.ClickException(str(error)) from None
-    if not context.controller:
+    if not context.is_controller:
         raise click.ClickException("Run Tempest from a controller")
     with quiet_context(context, bootstrap_only=False):
         # Legacy log collection prints unfiltered service logs.

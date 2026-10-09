@@ -13,6 +13,7 @@ from regress_stack.core.deployment import (
     Context,
     Deployment,
     Node,
+    Profile,
     ProviderNetwork,
     Secret,
     activate,
@@ -38,8 +39,7 @@ def inventory():
 
 def test_inventory_roundtrip_and_roles(inventory):
     assert (
-        Deployment.from_dict(json.loads(json.dumps(dataclasses.asdict(inventory))))
-        == inventory
+        Deployment.from_dict(json.loads(json.dumps(inventory.to_dict()))) == inventory
     )
     assert inventory.role("node2") == "controller"
     assert inventory.role("compute1") == "compute"
@@ -54,6 +54,23 @@ def test_hyperconverged_requires_three(inventory, count):
     )
     with pytest.raises(ValueError, match="exactly one or three"):
         dataclasses.replace(inventory, controllers=nodes)
+
+
+def test_topology_properties(inventory):
+    assert inventory.profile is Profile.HYPERCONVERGED
+    assert inventory.highly_available and inventory.quorum == 2
+    assert inventory.api_port(5000) == 15000
+    assert inventory.compute_nodes == inventory.nodes
+    control = dataclasses.replace(inventory, profile="control")
+    assert control.profile is Profile.CONTROL
+    assert control.compute_nodes == inventory.computes
+    assert not control.runs_compute_on(inventory.controllers[0])
+    single = dataclasses.replace(
+        control, controllers=control.controllers[:1], api_address="192.0.2.1"
+    )
+    assert not single.highly_available and single.quorum == 1
+    assert single.api_port(5000) == 5000
+    assert single.to_dict()["profile"] == "control"
 
 
 def test_single_controller_with_compute(inventory):
@@ -86,7 +103,7 @@ def test_control_profile_requires_compute_and_keeps_vip(inventory):
 @pytest.mark.parametrize("suffix", [".yaml", ".yml"])
 def test_yaml_inventory_uses_same_validation(inventory, tmp_path, suffix):
     path = tmp_path / f"inventory{suffix}"
-    path.write_text(yaml.safe_dump(dataclasses.asdict(inventory)))
+    path.write_text(yaml.safe_dump(inventory.to_dict()))
     assert Deployment.read(path) == inventory
     path.write_text("[]\n")
     with pytest.raises(ValueError, match="must be an object"):

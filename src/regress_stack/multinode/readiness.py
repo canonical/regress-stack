@@ -101,13 +101,13 @@ def volume_hosts(proxy: BlockStorageProxy) -> set[str]:
 
 def check(context: Context, unavailable: str | None = None) -> list[str]:
     """Read live state. This does not inject failures or create workloads."""
-    if not context.controller:
+    if not context.is_controller:
         raise ValueError("Run deployment readiness on a controller")
     if unavailable:
         context.deployment.node(unavailable)
         if unavailable == context.local.name:
             raise ValueError("Run readiness on a surviving node")
-        if len(context.deployment.controllers) != 3:
+        if not context.deployment.highly_available:
             raise ValueError("Degraded readiness requires three controllers")
     expected_controllers = {
         node.name for node in context.deployment.controllers if node.name != unavailable
@@ -115,13 +115,10 @@ def check(context: Context, unavailable: str | None = None) -> list[str]:
     expected_chassis = {
         node.name for node in context.deployment.nodes if node.name != unavailable
     }
-    compute_nodes = (
-        context.deployment.computes
-        if context.deployment.profile == "control"
-        else context.deployment.nodes
-    )
     expected_computes = {
-        node.name for node in compute_nodes if node.name != unavailable
+        node.name
+        for node in context.deployment.compute_nodes
+        if node.name != unavailable
     }
     failures: list[str] = []
 
@@ -136,7 +133,7 @@ def check(context: Context, unavailable: str | None = None) -> list[str]:
             failures.append(name)
 
     verify("local setup", lambda: common.done("local-setup"))
-    if len(context.deployment.controllers) == 3:
+    if context.deployment.highly_available:
         expected_addresses = {
             node.address
             for node in context.deployment.controllers

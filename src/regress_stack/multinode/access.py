@@ -51,11 +51,11 @@ def configuration(context: Context) -> str:
         f"    server {node.name} {node.address}:3306 check inter 2s fall 2 rise 1 on-marked-down shutdown-sessions"
         for node in nodes
     ]
-    if len(nodes) == 3:
+    if context.deployment.highly_available:
         for port in API_PORTS:
             result += [
                 f"listen api-{port}",
-                f"    bind {context.deployment.api_address}:{port + 10000}",
+                f"    bind {context.deployment.api_address}:{context.deployment.api_port(port)}",
                 "    balance roundrobin",
             ]
             result += [
@@ -132,7 +132,7 @@ result=$(/usr/bin/mysql --defaults-extra-file=/etc/haproxy/mysql-check.cnf --bat
     common.write("/etc/haproxy/haproxy.cfg", configuration(context), mode=0o644)
     common.run("haproxy", ["-c", "-f", "/etc/haproxy/haproxy.cfg"])
     common.restart("haproxy")
-    if len(context.deployment.controllers) == 3:
+    if context.deployment.highly_available:
         common.write(
             "/etc/keepalived/keepalived.conf",
             keepalived_configuration(context),

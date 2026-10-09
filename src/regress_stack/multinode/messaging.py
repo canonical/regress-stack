@@ -39,7 +39,7 @@ def setup() -> None:
         mode=0o644,
     )
     common.restart("rabbitmq-server")
-    if not context.bootstrap:
+    if not context.is_bootstrap:
         common.run("rabbitmqctl", ["stop_app"])
         # This path is only entered on a fresh, explicitly preseeded machine.
         common.run("rabbitmqctl", ["reset"])
@@ -62,7 +62,7 @@ def ensure_service(name: str) -> tuple[str, str]:
     context = common.context()
     name = common.token(name)
     password = common.token(context.secret(f"rabbitmq/{name}"))
-    if context.bootstrap:
+    if context.is_bootstrap:
         users: list[_User] = json.loads(
             common.run("rabbitmqctl", ["list_users", "--formatter", "json"])
         )

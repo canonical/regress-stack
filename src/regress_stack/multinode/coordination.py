@@ -98,9 +98,8 @@ def configuration(context: Context) -> tuple[str, str]:
         "dir /var/lib/regress-stack-coordination",
         'logfile ""',
     ]
-    if not context.bootstrap:
+    if not context.is_bootstrap:
         server.append(f"replicaof {context.deployment.bootstrap.address} {PORT}")
-    quorum = 2 if len(context.deployment.controllers) == 3 else 1
     sentinel = [
         # Redis 6.0 binds outgoing Sentinel sockets to the first address.
         f"bind {context.local.address} 127.0.0.1",
@@ -108,7 +107,7 @@ def configuration(context: Context) -> tuple[str, str]:
         "protected-mode yes",
         "daemonize no",
         "supervised systemd",
-        f"sentinel monitor {MASTER} {context.deployment.bootstrap.address} {PORT} {quorum}",
+        f"sentinel monitor {MASTER} {context.deployment.bootstrap.address} {PORT} {context.deployment.quorum}",
         f"sentinel auth-pass {MASTER} {password}",
         f"sentinel announce-ip {context.local.address}",
         f"sentinel down-after-milliseconds {MASTER} 5000",

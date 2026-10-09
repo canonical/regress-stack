@@ -49,7 +49,6 @@ def keyring(name: str, key: str, caps: Mapping[str, str] | None = None) -> str:
 
 def configuration(context: Context) -> str:
     nodes = context.deployment.controllers
-    size = len(nodes)
     return f"""[global]
 fsid = {context.secret("ceph/fsid")}
 mon host = {",".join(node.address for node in nodes)}
@@ -58,8 +57,8 @@ auth cluster required = cephx
 auth service required = cephx
 auth client required = cephx
 auth allow insecure global_id reclaim = false
-osd pool default size = {size}
-osd pool default min size = {2 if size == 3 else 1}
+osd pool default size = {len(nodes)}
+osd pool default min size = {context.deployment.quorum}
 osd crush chooseleaf type = 1
 """
 
@@ -68,7 +67,7 @@ def setup() -> None:
     context = common.context()
     common.write("/etc/ceph/ceph.conf", configuration(context), mode=0o644)
     for pool, user in (("volumes", "nova"), ("images", "glance")):
-        if pool == "images" and not context.controller:
+        if pool == "images" and not context.is_controller:
             continue
         # cinder and nova both consume the volumes keyring; grant only their
         # shared ceph group access, instead of exposing the key to all users.
@@ -78,12 +77,12 @@ def setup() -> None:
             keyring(f"client.{pool}", context.secret(f"ceph/client.{pool}")),
             user=user,
         )
-        if context.controller and pool == "volumes":
+        if context.is_controller and pool == "volumes":
             common.run("usermod", ["-a", "-G", "ceph", "nova"])
             common.run("usermod", ["-a", "-G", "ceph", "cinder"])
             shutil.chown(path, user="root", group="ceph")
             path.chmod(0o640)
-    if not context.controller:
+    if not context.is_controller:
         return
     common.write(
         "/etc/ceph/ceph.client.admin.keyring",
@@ -97,7 +96,7 @@ def setup() -> None:
         monmap = common.STATE / "monmap"
         mon_keyring = common.STATE / "mon.keyring"
         content = keyring("mon.", context.secret("ceph/mon."), CAPABILITIES["mon."])
-        if context.bootstrap:
+        if context.is_bootstrap:
             for entity, caps in CAPABILITIES.items():
                 if entity != "mon.":
                     content += keyring(entity, context.secret(f"ceph/{entity}"), caps)
@@ -146,7 +145,7 @@ def setup() -> None:
             timeout=180,
         )
         common.mark("ceph-mon")
-    if context.bootstrap:
+    if context.is_bootstrap:
         common.run("ceph", ["mon", "enable-msgr2"])
     if not common.done("ceph-mgr"):
         manager = Path(f"/var/lib/ceph/mgr/ceph-{name}")
@@ -161,7 +160,7 @@ def setup() -> None:
         common.mark("ceph-mgr")
     for slot in range(3):
         setup_osd(slot)
-    if context.bootstrap:
+    if context.is_bootstrap:
         pools = common.run("ceph", ["osd", "pool", "ls"]).splitlines()
         for pool in ("images", "volumes"):
             if pool not in pools:

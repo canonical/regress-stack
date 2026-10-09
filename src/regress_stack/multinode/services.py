@@ -67,7 +67,7 @@ def limit_wsgi_workers(name: str) -> None:
 def prepare(name: str) -> None:
     """Set multinode options before the existing module configures and starts."""
     context = common.context()
-    if context.controller:
+    if context.is_controller:
         limit_wsgi_workers(name)
     if name in CONFIGS:
         utils.cfg_set(
@@ -93,9 +93,7 @@ def prepare(name: str) -> None:
         utils.cfg_set(
             CONFIGS[name], ("scheduler", "discover_hosts_in_cells_interval", "10")
         )
-    if name == "nova" and (
-        not context.controller or context.deployment.profile != "control"
-    ):
+    if name == "nova" and context.runs_compute:
         common.run("systemctl", ["start", "libvirtd"])
         settings = [
             # Caracal's native os-vif driver opens OVSDB without privsep.

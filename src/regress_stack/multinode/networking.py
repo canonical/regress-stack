@@ -23,7 +23,7 @@ def central_options(context: Context) -> str:
             f"--db-{db}-cluster-local-addr={local}",
             f"--db-{db}-create-insecure-remote=yes",
         ]
-        if not context.bootstrap:
+        if not context.is_bootstrap:
             options += [
                 f"--db-{db}-cluster-remote-addr={context.deployment.bootstrap.address}"
             ]
@@ -36,7 +36,7 @@ def central_options(context: Context) -> str:
 
 def setup() -> None:
     context = common.context()
-    if context.controller and not common.done("ovn-central"):
+    if context.is_controller and not common.done("ovn-central"):
         common.run("systemctl", ["stop", "ovn-central"])
         # Package installation creates standalone empty DBs. Preserve them for
         # diagnosis and let ovn-ctl create/join a clustered DB in their place.
@@ -74,12 +74,12 @@ def setup() -> None:
             "external_ids:ovn-bridge-mappings=physnet1:br-ex",
             *(
                 ["external_ids:ovn-cms-options=enable-chassis-as-gw"]
-                if context.controller
+                if context.is_controller
                 else []
             ),
         ],
     )
-    if not context.controller:
+    if not context.is_controller:
         common.run(
             "ovs-vsctl",
             ["remove", "Open_vSwitch", ".", "external_ids", "ovn-cms-options"],
@@ -136,7 +136,7 @@ def metadata() -> None:
         (
             "DEFAULT",
             "nova_metadata_port",
-            "18775" if len(context.deployment.controllers) == 3 else "8775",
+            str(context.deployment.api_port(8775)),
         ),
         ("DEFAULT", "metadata_proxy_shared_secret", context.secret("neutron/metadata")),
         ("ovs", "ovsdb_connection", ovn.local_connection()),

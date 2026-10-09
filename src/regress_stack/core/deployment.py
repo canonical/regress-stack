@@ -10,6 +10,7 @@ are public; generated preseeds are secrets and must be transferred by the caller
 import contextlib
 import contextvars
 import dataclasses
+import enum
 import ipaddress
 import json
 import os
@@ -83,9 +84,25 @@ class ProviderNetwork:
             )
 
 
+class Profile(str, enum.Enum):
+    SINGLE = "single"
+    HYPERCONVERGED = "hyperconverged"
+    # Controllers run no Nova compute; only entries in computes do.
+    CONTROL = "control"
+
+
+_CONTROLLER_COUNTS = {
+    Profile.SINGLE: {1},
+    Profile.HYPERCONVERGED: {3},
+    Profile.CONTROL: {1, 3},
+}
+# Three-controller deployments publish each API through HAProxy on the VIP.
+_HA_PORT_OFFSET = 10000
+
+
 @dataclasses.dataclass(frozen=True)
 class Deployment:
-    profile: str
+    profile: Profile
     controllers: tuple[Node, ...]
     computes: tuple[Node, ...]
     api_address: str
@@ -97,6 +114,7 @@ class Deployment:
     def __post_init__(self):
         if type(self.schema) is not int or self.schema != 1:
             raise ValueError("Unsupported inventory schema")
+        object.__setattr__(self, "profile", Profile(self.profile))
         allowed_disabled = {"ceph", "cinder", "barbican", "heat", "magnum", "watcher"}
         if not set(self.disabled_modules) <= allowed_disabled:
             raise ValueError("Unsupported disabled module")
@@ -106,10 +124,9 @@ class Deployment:
             raise ValueError("Disabling ceph requires disabling cinder")
         if "cinder" in self.disabled_modules and "magnum" not in self.disabled_modules:
             raise ValueError("Disabling cinder requires disabling magnum")
-        allowed_counts = {"single": {1}, "hyperconverged": {3}, "control": {1, 3}}
-        if len(self.controllers) not in allowed_counts.get(self.profile, set()):
+        if len(self.controllers) not in _CONTROLLER_COUNTS[self.profile]:
             raise ValueError("Profiles require exactly one or three controllers")
-        if self.profile == "control" and not self.computes:
+        if self.profile is Profile.CONTROL and not self.computes:
             raise ValueError("The control profile requires at least one compute node")
         nodes = self.nodes
         if len({node.name for node in nodes}) != len(nodes):
@@ -128,7 +145,7 @@ class Deployment:
                 )
         if management.overlaps(ipaddress.IPv4Network(self.provider.cidr)):
             raise ValueError("Management and provider subnets must not overlap")
-        if len(self.controllers) == 3:
+        if self.highly_available:
             if self.api_address in {node.address for node in nodes}:
                 raise ValueError(
                     "The API VIP must be reserved separately from node addresses"
@@ -143,6 +160,29 @@ class Deployment:
     @property
     def bootstrap(self) -> Node:
         return self.controllers[0]
+
+    @property
+    def highly_available(self) -> bool:
+        return len(self.controllers) == 3
+
+    @property
+    def quorum(self) -> int:
+        """Majority of the controllers."""
+        return len(self.controllers) // 2 + 1
+
+    @property
+    def compute_nodes(self) -> tuple[Node, ...]:
+        return self.computes if self.profile is Profile.CONTROL else self.nodes
+
+    def runs_compute_on(self, node: Node) -> bool:
+        return node in self.compute_nodes
+
+    def api_port(self, port: int) -> int:
+        """The port publishing a controller API port on the API address."""
+        return port + _HA_PORT_OFFSET if self.highly_available else port
+
+    def to_dict(self) -> dict:
+        return {**dataclasses.asdict(self), "profile": self.profile.value}
 
     def node(self, name: str) -> Node:
         for node in self.nodes:
@@ -216,12 +256,16 @@ class Context:
         return self.deployment.node(self.local_name)
 
     @property
-    def controller(self) -> bool:
-        return self.deployment.role(self.local_name) == "controller"
+    def is_controller(self) -> bool:
+        return self.local in self.deployment.controllers
 
     @property
-    def bootstrap(self) -> bool:
+    def is_bootstrap(self) -> bool:
         return self.local == self.deployment.bootstrap
+
+    @property
+    def runs_compute(self) -> bool:
+        return self.deployment.runs_compute_on(self.local)
 
     def secret(self, key: str) -> str:
         try:
@@ -231,7 +275,7 @@ class Context:
 
     def export(self, directory: Path, contributions: Mapping[str, Secret]) -> None:
         """Export all peer preseeds. Modules explicitly name each secret's recipients."""
-        if not self.bootstrap:
+        if not self.is_bootstrap:
             raise ValueError("Only the bootstrap node can export join preseeds")
         names = {node.name for node in self.deployment.nodes}
         for secret in contributions.values():
@@ -252,7 +296,7 @@ class Context:
                 continue
             payload = {
                 "schema": 1,
-                "deployment": dataclasses.asdict(self.deployment),
+                "deployment": self.deployment.to_dict(),
                 "deployment_id": self.deployment_id,
                 "local_name": node.name,
                 "values": {

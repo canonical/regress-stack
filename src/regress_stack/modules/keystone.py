@@ -170,7 +170,7 @@ def o7k():
     os.environ.update(auth_env())
     context = current()
     options = {}
-    if context and context.controller and bootstrap_only():
+    if context and context.is_controller and bootstrap_only():
         # Planned peers can have package-default API listeners before joining.
         # Setup must consume the services it has configured on this machine.
         options = {
@@ -251,7 +251,7 @@ def ensure_service_account(name: str, type: str, url: str) -> typing.Tuple[str, 
 
     context = current()
     password = context.secret(f"keystone/{name}") if context else "changeme"
-    if context and not context.bootstrap:
+    if context and not context.is_bootstrap:
         return name, password
 
     user = ensure_user(name, password, service_domain())

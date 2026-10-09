@@ -112,7 +112,7 @@ def run(
                 "Join preseeds already identify the node and cannot export peers"
             )
         context = Context.read(seed)
-        if context.bootstrap:
+        if context.is_bootstrap:
             raise ValueError("Use the inventory for bootstrap, not a join preseed")
     else:
         if not node or not export:
@@ -120,7 +120,7 @@ def run(
         assert inventory is not None  # Validated exclusive inventory/preseed above.
         deployment = Deployment.read(inventory)
         context = Context(deployment, node, str(uuid.uuid4()))
-        if not context.bootstrap:
+        if not context.is_bootstrap:
             raise ValueError("An inventory can only bootstrap its first controller")
     # These validations happen before changing machine configuration.
     local_preflight(context)
@@ -140,7 +140,7 @@ def run(
             if seed and saved.deployment_id != context.deployment_id:
                 raise ValueError("Join preseed belongs to a different deployment")
             context = saved
-        elif context.bootstrap:
+        elif context.is_bootstrap:
             with quiet_context(context):
                 preseed.generate(context)
             preseed.save(context, LOCAL_STATE)
@@ -158,7 +158,7 @@ def run(
                 for member in context.deployment.nodes
             )
             common.write("/etc/hosts", hosts, mode=0o644)
-            if context.controller:
+            if context.is_controller:
                 database.setup()
                 access.setup()
                 messaging.setup()
@@ -171,7 +171,7 @@ def run(
                     continue
                 if common.done(f"service-{module.name}"):
                     continue
-                if module.name == "neutron" and not context.controller:
+                if module.name == "neutron" and not context.is_controller:
                     networking.metadata()
                 else:
                     services.prepare(module.name)
@@ -180,7 +180,7 @@ def run(
                 common.mark(f"service-{module.name}")
                 utils.mark_setup(f"regress_stack.modules.{module.name}")
             # Export only after all deployment resources and shared keys exist.
-            if context.bootstrap:
+            if context.is_bootstrap:
                 assert export is not None  # Required for bootstrap above.
                 context.export(export, preseed.contributions(context))
             common.mark("local-setup")

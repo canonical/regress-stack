@@ -39,7 +39,7 @@ def bootstrap() -> bool:
     from regress_stack.core.deployment import current, bootstrap_only
 
     context = current()
-    return context is None or context.bootstrap or not bootstrap_only()
+    return context is None or context.is_bootstrap or not bootstrap_only()
 
 
 def bootstrap_sudo(cmd, args, user=None):

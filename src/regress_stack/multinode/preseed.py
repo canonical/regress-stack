@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import base64
-import dataclasses
 import json
 import os
 from pathlib import Path
@@ -114,7 +113,7 @@ def save(context: Context, path: Path) -> None:
         json.dumps(
             {
                 "schema": 1,
-                "deployment": dataclasses.asdict(context.deployment),
+                "deployment": context.deployment.to_dict(),
                 "deployment_id": context.deployment_id,
                 "local_name": context.local_name,
                 "values": context.values,

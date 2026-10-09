@@ -89,7 +89,7 @@ def setup():
     from regress_stack.core.deployment import current
 
     context = current()
-    controller = context is None or context.controller
+    controller = context is None or context.is_controller
     runs_compute = (
         context is None or context.deployment.profile != "control" or not controller
     )
@@ -281,7 +281,7 @@ def _ensure_questing_compat() -> None:
             ("nova_sys_admin", "helper_command", NOVA_PRIVSEP_HELPER),
             ("vif_plug_ovs_privileged", "helper_command", NOVA_PRIVSEP_HELPER),
         )
-    if (context is None or context.controller) and _api_runs_under_apache():
+    if (context is None or context.is_controller) and _api_runs_under_apache():
         _ensure_metadata_site()
 
 

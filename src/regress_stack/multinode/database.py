@@ -20,7 +20,7 @@ def configuration(context: Context) -> str:
         "log_replica_updates": "ON",
         "binlog_expire_logs_seconds": "604800",
     }
-    if len(nodes) == 3:
+    if context.deployment.highly_available:
         config.update(
             {
                 # All controller service pools connect to the single primary.
@@ -70,18 +70,18 @@ CREATE USER IF NOT EXISTS 'regress_recovery'@'%' IDENTIFIED BY '{password}';
 GRANT REPLICATION SLAVE, CONNECTION_ADMIN ON *.* TO 'regress_recovery'@'%';
 CREATE USER IF NOT EXISTS 'regress_check'@'%' IDENTIFIED BY '{check_password}';
 """)
-    if len(context.deployment.controllers) == 3:
+    if context.deployment.highly_available:
         common.sql(f"""CHANGE REPLICATION SOURCE TO SOURCE_USER='regress_recovery',
 SOURCE_PASSWORD='{password}' FOR CHANNEL 'group_replication_recovery';
 SET GLOBAL super_read_only=ON;
 """)
         # Bootstrap is a one-time operation, never a persistent startup option.
-        if context.bootstrap:
+        if context.is_bootstrap:
             common.sql("SET GLOBAL group_replication_bootstrap_group=ON;")
         try:
             common.sql("START GROUP_REPLICATION;")
         finally:
-            if context.bootstrap:
+            if context.is_bootstrap:
                 common.sql("SET GLOBAL group_replication_bootstrap_group=OFF;")
         common.wait_for(
             lambda: common.sql(
@@ -99,7 +99,7 @@ def ensure_service(name: str) -> tuple[str, str]:
     context = common.context()
     name = common.token(name)
     password = common.token(context.secret(f"mysql/{name}"))
-    if context.bootstrap:
+    if context.is_bootstrap:
         common.sql(f"""CREATE DATABASE IF NOT EXISTS `{name}`;
 CREATE USER IF NOT EXISTS '{name}'@'%' IDENTIFIED BY '{password}';
 GRANT ALL PRIVILEGES ON `{name}`.* TO '{name}'@'%';

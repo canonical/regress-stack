@@ -12,7 +12,7 @@ from types import ModuleType
 import networkx as nx
 
 from regress_stack.core import apt
-from regress_stack.core.deployment import Context
+from regress_stack.core.deployment import Context, Profile
 from regress_stack.multinode import coordination
 
 
@@ -73,8 +73,8 @@ COMPUTE_MODULES: tuple[LocalModule, ...] = (
 
 
 def execution_order(context: Context, check_packages: bool = True) -> list[LocalModule]:
-    modules = CONTROLLER_MODULES if context.controller else COMPUTE_MODULES
-    if context.controller and context.deployment.profile == "control":
+    modules = CONTROLLER_MODULES if context.is_controller else COMPUTE_MODULES
+    if context.is_controller and context.deployment.profile is Profile.CONTROL:
         modules = tuple(
             LocalModule(
                 module.name,
@@ -127,11 +127,11 @@ def packages(context: Context, no_tempest: bool = True) -> list[str]:
     required = ["crudini", "python3-openstackclient"]
     for module in execution_order(context, check_packages=False):
         required.extend(module.packages(no_tempest=no_tempest))
-    if context.controller:
+    if context.is_controller:
         required.extend(coordination.packages(context))
         required.append("haproxy")
-        if len(context.deployment.controllers) == 3:
+        if context.deployment.highly_available:
             required.append("keepalived")
-    if context.controller and not no_tempest:
+    if context.is_controller and not no_tempest:
         required.extend(("tempest", "python3-tempestconf"))
     return list(dict.fromkeys(required))

@@ -19,7 +19,7 @@ from regress_stack.modules import utils
 
 def test_compute_package_cli(context, tmp_path):
     inventory = tmp_path / "inventory.json"
-    inventory.write_text(json.dumps(dataclasses.asdict(context.deployment)))
+    inventory.write_text(json.dumps(context.deployment.to_dict()))
     result = CliRunner().invoke(
         main, ["packages", "--inventory", str(inventory), "--node", "compute1"]
     )
@@ -36,7 +36,7 @@ def test_compute_package_cli(context, tmp_path):
 
 def test_yaml_control_inventory_package_cli(context, tmp_path):
     inventory = tmp_path / "inventory.yaml"
-    data = dataclasses.asdict(context.deployment)
+    data = context.deployment.to_dict()
     data["profile"] = "control"
     inventory.write_text(yaml.safe_dump(data))
     result = CliRunner().invoke(
@@ -50,7 +50,7 @@ def test_setup_rejects_target_with_inventory_before_configuration(
     context, tmp_path, monkeypatch
 ):
     inventory = tmp_path / "inventory.json"
-    inventory.write_text(json.dumps(dataclasses.asdict(context.deployment)))
+    inventory.write_text(json.dumps(context.deployment.to_dict()))
     run = Mock(side_effect=AssertionError("must reject before configuration"))
     monkeypatch.setattr(setup, "run", run)
     result = CliRunner().invoke(main, ["setup", "nova", "--inventory", str(inventory)])
@@ -175,7 +175,7 @@ def test_preflight_rejects_address_mismatch_before_package_checks(context, monke
 
 def test_bootstrap_setup_export_is_last(context, tmp_path, monkeypatch):
     inventory = tmp_path / "inventory.json"
-    inventory.write_text(json.dumps(dataclasses.asdict(context.deployment)))
+    inventory.write_text(json.dumps(context.deployment.to_dict()))
     state = tmp_path / "state"
     monkeypatch.setattr(setup.common, "STATE", state)
     monkeypatch.setattr(setup, "LOCAL_STATE", state / "context.json")
