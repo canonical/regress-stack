@@ -18,6 +18,7 @@ class LocalModule:
     local_dependencies: tuple[str, ...] = ()
     shared_dependencies: tuple[str, ...] = ()
     package_override: tuple[str, ...] = ()
+    packages_function: str = "determine_packages"
 
     @property
     def module(self):
@@ -27,8 +28,8 @@ class LocalModule:
         if self.package_override:
             return list(self.package_override)
         module = self.module
-        if hasattr(module, "determine_packages"):
-            return module.determine_packages(no_tempest=no_tempest)
+        if determine := getattr(module, self.packages_function, None):
+            return determine(no_tempest=no_tempest)
         return list(module.PACKAGES)
 
 
@@ -62,7 +63,7 @@ COMPUTE_MODULES = (
         "nova",
         ("ceph", "neutron"),
         ("keystone", "rabbitmq", "placement", "glance", "cinder"),
-        ("nova-compute",),
+        packages_function="compute_packages",
     ),
 )
 

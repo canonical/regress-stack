@@ -67,15 +67,22 @@ NOVA_PRIVSEP_HELPER = (
 
 
 def determine_packages(no_tempest: bool = False) -> list[str]:
-    packages = list(BASE_PACKAGES)
+    return [*BASE_PACKAGES, *spice_packages()]
+
+
+def compute_packages(no_tempest: bool = False) -> list[str]:
+    """Packages for a node that only runs nova-compute."""
+    return ["nova-compute", *spice_packages()]
+
+
+def spice_packages() -> list[str]:
+    # QEMU 8.1 moved SPICE support out of qemu-system-common into a module.
     if (
         core_apt.PkgVersionCompare("qemu-system-common", candidate=True, upstream=True)
         >= "8.1.0"
     ):
-        packages.append("qemu-system-modules-spice")
-    else:
-        packages.append("qemu-system-common")
-    return packages
+        return ["qemu-system-modules-spice"]
+    return ["qemu-system-common"]
 
 
 def setup():

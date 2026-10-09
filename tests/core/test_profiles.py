@@ -24,9 +24,12 @@ def deployment():
 
 
 def test_compute_has_only_local_client_packages(deployment):
+    from regress_stack.modules import nova
+
     context = Context(deployment, "compute1", str(uuid.uuid4()))
     packages = profiles.packages(context)
     assert "nova-compute" in packages
+    assert set(nova.spice_packages()) <= set(packages)
     assert "ovn-host" in packages
     assert "neutron-ovn-metadata-agent" in packages
     assert "ceph-common" in packages
