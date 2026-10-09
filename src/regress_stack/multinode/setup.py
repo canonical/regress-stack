@@ -52,9 +52,10 @@ class _InterfaceInfo(TypedDict):
 @contextlib.contextmanager
 def quiet_context(context: Context, *, bootstrap_only: bool = True) -> Iterator[None]:
     # Third-party HTTP debug logging can contain authentication request bodies.
+    # regress-stack's own logging stays enabled; private commands never log.
     levels = {
         name: logging.getLogger(name).level
-        for name in ("", "openstack", "keystoneauth", "urllib3")
+        for name in ("openstack", "keystoneauth", "urllib3")
     }
     for name in levels:
         logging.getLogger(name).setLevel(logging.WARNING)

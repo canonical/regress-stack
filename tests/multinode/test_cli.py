@@ -75,6 +75,23 @@ def test_runtime_resources_can_be_created_on_surviving_controller(peer):
         assert not utils.bootstrap()
 
 
+def test_quiet_context_mutes_only_third_party_http_logging(context):
+    import logging
+
+    root = logging.getLogger()
+    saved = root.level
+    root.setLevel(logging.DEBUG)
+    try:
+        with setup.quiet_context(context):
+            assert root.level == logging.DEBUG
+            for name in ("openstack", "keystoneauth", "urllib3"):
+                assert logging.getLogger(name).level == logging.WARNING
+        for name in ("openstack", "keystoneauth", "urllib3"):
+            assert logging.getLogger(name).level == logging.NOTSET
+    finally:
+        root.setLevel(saved)
+
+
 def test_preflight_rejects_address_mismatch_before_package_checks(context, monkeypatch):
     monkeypatch.setattr(setup.os, "geteuid", lambda: 0)
     monkeypatch.setattr(setup.utils, "release", lambda: "noble")
