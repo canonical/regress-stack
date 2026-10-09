@@ -1,6 +1,8 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+from unittest.mock import Mock
+
 from regress_stack.multinode.readiness import queue_replicas_ready
 
 
@@ -144,3 +146,48 @@ def test_storage_free_readiness_omits_ceph_and_cinder(context, monkeypatch):
         "Ceph" in name or "Cinder" in name or "volume API" in name for name in failures
     )
     client.block_storage.volumes.assert_not_called()
+
+
+def test_string_expiry_is_not_treated_as_expiring():
+    durable = dict(
+        type="quorum", durable=True, members=[1, 2, 3], online=[1, 2, 3], arguments={}
+    )
+    for arguments in ({"x-expires": "1800000"}, [["x-expires", "longstr", "1"]]):
+        transient = dict(
+            type="classic", durable=False, members=[], online=[], arguments=arguments
+        )
+        assert not queue_replicas_ready([durable, transient], 3)
+
+
+def test_failed_check_logs_only_exception_type(context, monkeypatch, caplog):
+    from regress_stack.multinode import readiness
+
+    def run(command, args, **kwargs):
+        raise KeyError("secret-value")
+
+    monkeypatch.setattr(readiness.common, "run", run)
+    monkeypatch.setattr(readiness.common, "sql", run)
+    monkeypatch.setattr("regress_stack.modules.keystone.o7k", lambda: None)
+    with caplog.at_level("WARNING", logger=readiness.__name__):
+        failures = readiness.check(context)
+    assert "RabbitMQ membership" in failures
+    assert "RabbitMQ membership check raised KeyError" in caplog.text
+    assert "secret-value" not in caplog.text
+
+
+def test_sentinel_agreement_queries_every_live_controller(context, monkeypatch):
+    from regress_stack.multinode import readiness
+
+    masters = {"192.0.2.1": "192.0.2.1", "192.0.2.2": "192.0.2.1"}
+    monkeypatch.setattr(readiness.common, "run", Mock(side_effect=RuntimeError))
+    monkeypatch.setattr(readiness.common, "sql", Mock(side_effect=RuntimeError))
+    monkeypatch.setattr("regress_stack.modules.keystone.o7k", lambda: None)
+    monkeypatch.setattr(readiness.coordination, "check_quorum", lambda *_: False)
+    monkeypatch.setattr(
+        readiness.coordination,
+        "master_address",
+        lambda _context, host: masters[host],
+    )
+    assert "Sentinel primary agreement" not in readiness.check(context, "node3")
+    masters["192.0.2.2"] = "192.0.2.2"
+    assert "Sentinel primary agreement" in readiness.check(context, "node3")

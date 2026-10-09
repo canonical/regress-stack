@@ -5,7 +5,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 import json
-from typing import TYPE_CHECKING, TypedDict, cast
+import logging
+from typing import TYPE_CHECKING, TypedDict
 
 from regress_stack.core.deployment import Context, Node
 from regress_stack.multinode import common, coordination, networking
@@ -13,6 +14,8 @@ from regress_stack.multinode import common, coordination, networking
 if TYPE_CHECKING:
     from openstack.block_storage.v3._proxy import Proxy as BlockStorageProxy
     from openstack.connection import Connection
+
+LOG = logging.getLogger(__name__)
 
 
 class QueueInfo(TypedDict):
@@ -58,11 +61,13 @@ def queue_replicas_ready(rows: Sequence[QueueInfo], controller_count: int) -> bo
         # RabbitMQ validates x-expires as an integer; other arguments may have
         # arbitrary AMQP field values.
         if isinstance(arguments, dict):
-            return cast(int, arguments.get("x-expires", 0)) > 0
-        # RabbitMQ 3.12's CLI serializes AMQP field tables as typed triples.
-        return any(
-            key == "x-expires" and cast(int, value) > 0 for key, _, value in arguments
-        )
+            value = arguments.get("x-expires", 0)
+        else:
+            # RabbitMQ 3.12's CLI serializes AMQP field tables as typed triples.
+            value = next(
+                (value for key, _, value in arguments if key == "x-expires"), 0
+            )
+        return isinstance(value, int) and value > 0
 
     quorum = controller_count // 2 + 1
     durable = [row for row in rows if row["durable"]]
@@ -124,8 +129,10 @@ def check(context: Context, unavailable: str | None = None) -> list[str]:
         try:
             if not function():
                 failures.append(name)
-        except Exception:
-            # Authentication and service exceptions can contain credentials.
+        except Exception as error:
+            # Authentication and service exceptions can contain credentials;
+            # record only the exception type so parsing bugs stay visible.
+            LOG.warning("%s check raised %s", name, type(error).__name__)
             failures.append(name)
 
     verify("local setup", lambda: common.done("local-setup"))
@@ -281,26 +288,26 @@ def check(context: Context, unavailable: str | None = None) -> list[str]:
         } == expected_chassis
 
     verify("OVN compute host identities", chassis)
-    masters: list[str] = []
-    for node in context.deployment.controllers:
-        if node.name == unavailable:
-            continue
+    live_controllers = [
+        node for node in context.deployment.controllers if node.name != unavailable
+    ]
+    for node in live_controllers:
 
         def sentinel(node: Node = node) -> bool:
-            masters.append(coordination.master_address(context, node.address))
             return coordination.check_quorum(context, node.address)
 
         verify(f"Sentinel on {node.name}", sentinel)
-    verify(
-        "Sentinel primary agreement",
-        lambda: len(set(masters)) == 1
-        and masters[0]
-        in {
-            node.address
-            for node in context.deployment.controllers
-            if node.name != unavailable
-        },
-    )
+
+    def sentinel_agreement() -> bool:
+        masters = {
+            coordination.master_address(context, node.address)
+            for node in live_controllers
+        }
+        return len(masters) == 1 and masters <= {
+            node.address for node in live_controllers
+        }
+
+    verify("Sentinel primary agreement", sentinel_agreement)
 
     verify(
         "Redis/Valkey replication",
