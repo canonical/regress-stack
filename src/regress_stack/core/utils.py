@@ -19,6 +19,8 @@ import typing
 
 import pyroute2
 
+from regress_stack.core import deployment, quiet, results
+
 LOG = logging.getLogger(__name__)
 
 REGRESS_STACK_DIR = pathlib.Path("/var/lib/regress-stack/")
@@ -69,13 +71,9 @@ def run(
     env: typing.Optional[typing.Dict[str, str]] = None,
     cwd: typing.Optional[str] = None,
 ) -> str:
-    from regress_stack.core.deployment import current
-
-    if current() is not None:
-        from regress_stack.multinode.common import run as private_run
-
+    if deployment.current() is not None:
         # Legacy commands (migrations, image downloads) have never been bounded.
-        return private_run(cmd, args, env=env, cwd=cwd, timeout=None)
+        return quiet.run(cmd, args, env=env, cwd=cwd, timeout=None)
     cmd_args = [cmd]
     cmd_args.extend(args)
     try:
@@ -108,12 +106,11 @@ def system(
     env: typing.Optional[typing.Dict[str, str]] = None,
     cwd: typing.Optional[str] = None,
 ) -> int:
-    from regress_stack.core.deployment import current
-
-    if current() is not None:
-        from regress_stack.multinode.results import run as result_run
-
-        return result_run("sh", ["-c", cmd], env=env, cwd=cwd)
+    context = deployment.current()
+    if context is not None:
+        return results.run(
+            "sh", ["-c", cmd], env=env, cwd=cwd, secrets=tuple(context.values.values())
+        )
     exit_code = -1
     saved_env = os.environ
     saved_cwd = os.getcwd()
@@ -165,9 +162,7 @@ def mask_server(service: str):
 
 
 def fqdn() -> str:
-    from regress_stack.core.deployment import current
-
-    context = current()
+    context = deployment.current()
     return context.local.name if context else _fqdn()
 
 
@@ -187,9 +182,7 @@ def _get_local_ip_by_default_route() -> typing.Tuple[str, int]:
 
 
 def my_ip() -> str:
-    from regress_stack.core.deployment import current
-
-    context = current()
+    context = deployment.current()
     return context.local.address if context else _my_ip()
 
 

@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from regress_stack.core.deployment import Context, Deployment, Node, ProviderNetwork
-from regress_stack.core import profiles
+from regress_stack.multinode import profiles
 
 
 @pytest.fixture

@@ -105,20 +105,27 @@ def test_parse_tempest_version_accepts_missing_patch():
 
 
 def test_multinode_system_preserves_unbounded_execution(monkeypatch):
-    monkeypatch.setattr("regress_stack.core.deployment.current", lambda: object())
+    context = mock.Mock(values={"keystone/admin": "admin-secret"})
+    monkeypatch.setattr("regress_stack.core.deployment.current", lambda: context)
     runner = mock.Mock(return_value=0)
-    monkeypatch.setattr("regress_stack.multinode.results.run", runner)
+    monkeypatch.setattr("regress_stack.core.results.run", runner)
 
     assert regress_stack.core.utils.system("tempest run", {"A": "B"}, "/work") == 0
     runner.assert_called_once_with(
-        "sh", ["-c", "tempest run"], env={"A": "B"}, cwd="/work"
+        "sh",
+        ["-c", "tempest run"],
+        env={"A": "B"},
+        cwd="/work",
+        secrets=("admin-secret",),
     )
 
 
 def test_multinode_system_preserves_failure_status(monkeypatch):
-    monkeypatch.setattr("regress_stack.core.deployment.current", lambda: object())
+    monkeypatch.setattr(
+        "regress_stack.core.deployment.current", lambda: mock.Mock(values={})
+    )
     runner = mock.Mock(return_value=3)
-    monkeypatch.setattr("regress_stack.multinode.results.run", runner)
+    monkeypatch.setattr("regress_stack.core.results.run", runner)
 
     assert regress_stack.core.utils.system("tempest run") == 3
 
@@ -126,7 +133,7 @@ def test_multinode_system_preserves_failure_status(monkeypatch):
 def test_multinode_run_preserves_unbounded_execution(monkeypatch):
     monkeypatch.setattr("regress_stack.core.deployment.current", lambda: object())
     runner = mock.Mock(return_value="output")
-    monkeypatch.setattr("regress_stack.multinode.common.run", runner)
+    monkeypatch.setattr("regress_stack.core.quiet.run", runner)
 
     assert regress_stack.core.utils.run("nova-manage", ["db", "sync"]) == "output"
     runner.assert_called_once_with(

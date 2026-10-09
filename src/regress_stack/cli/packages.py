@@ -32,7 +32,7 @@ def packages(target=None, no_tempest=False, inventory=None, node=None, preseed=N
     """
     if inventory or node or preseed:
         from regress_stack.core.deployment import Context, Deployment
-        from regress_stack.core.profiles import packages as local_packages
+        from regress_stack.multinode.profiles import packages as local_packages
 
         if (
             target

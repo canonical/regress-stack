@@ -14,7 +14,7 @@ import socket
 from typing import TypedDict
 import uuid
 
-from regress_stack.core import profiles, utils
+from regress_stack.core import utils
 from regress_stack.core.deployment import Context, Deployment, activate
 from regress_stack.multinode import (
     access,
@@ -24,6 +24,7 @@ from regress_stack.multinode import (
     messaging,
     networking,
     preseed,
+    profiles,
     services,
     storage,
 )

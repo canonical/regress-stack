@@ -62,7 +62,7 @@ def main():
     args = parser.parse_args()
     if args.follow:
         sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
-        from regress_stack.multinode.results import result_line
+        from regress_stack.core.results import result_line
 
         if args.done is None:
             parser.error("--follow requires --done")

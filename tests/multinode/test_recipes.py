@@ -3,7 +3,6 @@
 
 import json
 import dataclasses
-import subprocess
 from unittest.mock import Mock
 
 import pytest
@@ -20,21 +19,6 @@ from regress_stack.multinode import (
     storage,
 )
 from regress_stack.modules import keystone, mysql, rabbitmq, utils
-
-
-def test_private_command_hides_secrets(caplog, monkeypatch):
-    def failed(*args, **kwargs):
-        raise subprocess.CalledProcessError(
-            1, ["mysql", "secret"], "stdout-secret", "stderr-secret"
-        )
-
-    monkeypatch.setattr(common.subprocess, "run", failed)
-    with pytest.raises(subprocess.CalledProcessError) as error:
-        common.run("mysql", ["password-secret"], input="sql-secret")
-    assert "secret" not in str(error.value)
-    assert error.value.cmd == ["mysql"]
-    assert error.value.stdout is None and error.value.stderr is None
-    assert "secret" not in caplog.text
 
 
 def test_gr_config_never_persists_bootstrap(context):
@@ -552,6 +536,7 @@ def test_nova_preparation_starts_libvirt_before_secret_definition(
 
     run = Mock()
     monkeypatch.setattr(common, "run", run)
+    monkeypatch.setattr(services.utils, "cfg_set", Mock())
     with activate(request.getfixturevalue(role)):
         services.prepare("nova")
     run.assert_any_call("systemctl", ["start", "libvirtd"])

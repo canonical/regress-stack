@@ -10,7 +10,7 @@ import pytest
 
 from regress_stack.core.deployment import activate
 from regress_stack.core.utils import system
-from regress_stack.multinode.results import result_line
+from regress_stack.core.results import result_line
 
 
 @pytest.mark.parametrize(

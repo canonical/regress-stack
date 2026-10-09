@@ -12,6 +12,9 @@ import re
 import subprocess
 from urllib.parse import quote, quote_plus
 
+# Only standard library dependencies: the CI host imports result_line().
+from regress_stack.core.quiet import CommandError
+
 
 def result_line(line: str) -> str | None:
     """Allow only subunit-trace test outcomes and numeric summary lines.
@@ -45,13 +48,12 @@ def run(
     *,
     env: Mapping[str, str] | None = None,
     cwd: str | os.PathLike[str] | None = None,
+    secrets: Sequence[str] = (),
 ) -> int:
-    """Stream safe test results and return the actual subprocess exit status."""
-    from regress_stack.core.deployment import current
-    from regress_stack.multinode.common import CommandError
+    """Stream safe test results and return the actual subprocess exit status.
 
-    context = current()
-    secrets = tuple(context.values.values()) if context is not None else ()
+    Each secret is redacted from the published lines.
+    """
     try:
         with subprocess.Popen(
             [command, *args],

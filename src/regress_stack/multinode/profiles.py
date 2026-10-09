@@ -3,13 +3,17 @@
 
 """Fixed service placement for explicit deployments, independent of legacy discovery."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 import importlib
+from types import ModuleType
 
 import networkx as nx
 
 from regress_stack.core import apt
 from regress_stack.core.deployment import Context
+from regress_stack.multinode import coordination
 
 
 @dataclass(frozen=True)
@@ -21,7 +25,7 @@ class LocalModule:
     packages_function: str = "determine_packages"
 
     @property
-    def module(self):
+    def module(self) -> ModuleType:
         return importlib.import_module(f"regress_stack.modules.{self.name}")
 
     def packages(self, no_tempest: bool = False) -> list[str]:
@@ -29,13 +33,13 @@ class LocalModule:
             return list(self.package_override)
         module = self.module
         if determine := getattr(module, self.packages_function, None):
-            return determine(no_tempest=no_tempest)
+            return list(determine(no_tempest=no_tempest))
         return list(module.PACKAGES)
 
 
 # Every controller has the same service placement. Dependency edges describe
 # work on this machine; shared dependencies never pull in local server packages.
-CONTROLLER_MODULES = (
+CONTROLLER_MODULES: tuple[LocalModule, ...] = (
     LocalModule("utils"),
     LocalModule("mysql", ("utils",)),
     LocalModule("rabbitmq", ("utils",)),
@@ -52,7 +56,7 @@ CONTROLLER_MODULES = (
     LocalModule("magnum", ("heat", "cinder", "glance", "nova")),
     LocalModule("watcher", ("nova", "mysql", "rabbitmq")),
 )
-COMPUTE_MODULES = (
+COMPUTE_MODULES: tuple[LocalModule, ...] = (
     LocalModule("utils"),
     LocalModule("ceph", ("utils",), ("ceph",), ("ceph-common",)),
     LocalModule("ovn", ("utils",), ("ovn",), ("openvswitch-switch", "ovn-host")),
@@ -94,7 +98,7 @@ def execution_order(context: Context, check_packages: bool = True) -> list[Local
         if module.name not in context.deployment.disabled_modules
     )
     by_name = {module.name: module for module in modules}
-    graph = nx.DiGraph()
+    graph: nx.DiGraph[str] = nx.DiGraph()
     for module in modules:
         graph.add_node(module.name)
         for dependency in module.local_dependencies:
@@ -124,8 +128,6 @@ def packages(context: Context, no_tempest: bool = True) -> list[str]:
     for module in execution_order(context, check_packages=False):
         required.extend(module.packages(no_tempest=no_tempest))
     if context.controller:
-        from regress_stack.multinode import coordination
-
         required.extend(coordination.packages(context))
         required.append("haproxy")
         if len(context.deployment.controllers) == 3:
