@@ -300,7 +300,7 @@ def test_setup_client_uses_local_apis_and_runtime_uses_vip(
     connect = Mock()
     monkeypatch.setattr(keystone.openstack, "connect", connect)
     monkeypatch.setattr(keystone.os, "environ", {})
-    keystone.o7k.cache_clear()
+    keystone.reset_connection()
     try:
         with activate(context, bootstrap_only=setup_phase):
             keystone.o7k()
@@ -318,7 +318,7 @@ def test_setup_client_uses_local_apis_and_runtime_uses_vip(
                 == f"http://{context.deployment.api_address}:15000/v3/"
             )
     finally:
-        keystone.o7k.cache_clear()
+        keystone.reset_connection()
 
 
 def test_ceph_join_selects_management_network(context):
@@ -647,3 +647,19 @@ def test_wait_for_retries_failed_private_commands(monkeypatch):
     monkeypatch.setattr(common.time, "sleep", lambda _: None)
     common.wait_for(check, "test")
     assert len(attempts) == 2
+
+
+def test_client_connection_is_cached_per_context_and_phase(context, peer, monkeypatch):
+    monkeypatch.setattr(keystone.openstack, "connect", lambda **_kwargs: object())
+    monkeypatch.setattr(keystone.os, "environ", {})
+    keystone.reset_connection()
+    try:
+        with activate(context):
+            setup = keystone.o7k()
+            assert keystone.o7k() is setup
+        with activate(context, bootstrap_only=False):
+            assert keystone.o7k() is not setup
+        with activate(peer):
+            assert keystone.o7k() is not setup
+    finally:
+        keystone.reset_connection()

@@ -163,10 +163,28 @@ def auth_rc():
     return "\n".join(f"export {k}={v}" for k, v in auth_env().items())
 
 
+def o7k() -> "openstack.connection.Connection":
+    env = auth_env()
+    os.environ.update(env)
+    # Key the cached connection by everything it is built from, so a
+    # different deployment context or phase never reuses it.
+    return _connect(
+        tuple(sorted(env.items())),
+        tuple(sorted(topology.setup_client_overrides().items())),
+    )
+
+
 @functools.lru_cache()
-def o7k():
-    os.environ.update(auth_env())
-    return openstack.connect(load_envvars=True, **topology.setup_client_overrides())
+def _connect(
+    env: typing.Tuple[typing.Tuple[str, str], ...],
+    overrides: typing.Tuple[typing.Tuple[str, str], ...],
+):
+    # openstack.connect() reads env from os.environ; it is part of the key.
+    return openstack.connect(load_envvars=True, **dict(overrides))
+
+
+def reset_connection() -> None:
+    _connect.cache_clear()
 
 
 @functools.lru_cache()
@@ -323,7 +341,7 @@ def ensure_endpoint(service, url: str):
         _ensure_endpoint_interface(conn, service, url, region(), interface, endpoints)
     # Clear connection after updating endpoints
     conn.close()
-    o7k.cache_clear()
+    reset_connection()
 
 
 def grant_domain_role(user, role, domain):

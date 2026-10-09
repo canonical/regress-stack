@@ -17,7 +17,6 @@ import uuid
 
 from regress_stack.core import utils
 from regress_stack.core.deployment import Context, Deployment, activate
-from regress_stack.modules import keystone
 from regress_stack.multinode import (
     access,
     common,
@@ -54,12 +53,10 @@ def quiet_context(context: Context, *, bootstrap_only: bool = True) -> Iterator[
     }
     for name in levels:
         logging.getLogger(name).setLevel(logging.WARNING)
-    keystone.o7k.cache_clear()
     try:
         with activate(context, bootstrap_only=bootstrap_only):
             yield
     finally:
-        keystone.o7k.cache_clear()
         for name, level in levels.items():
             logging.getLogger(name).setLevel(level)
 
