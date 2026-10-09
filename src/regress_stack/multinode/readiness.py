@@ -9,6 +9,7 @@ import logging
 from typing import TYPE_CHECKING, TypedDict
 
 from regress_stack.core.deployment import Context, Node
+from regress_stack.modules import keystone
 from regress_stack.multinode import common, coordination, networking
 
 if TYPE_CHECKING:
@@ -310,8 +311,6 @@ def check(context: Context, unavailable: str | None = None) -> list[str]:
         "Redis/Valkey replication",
         lambda: coordination.check_members(context, unavailable),
     )
-
-    from regress_stack.modules import keystone
 
     try:
         connection: Connection = keystone.o7k()

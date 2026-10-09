@@ -124,22 +124,3 @@ WantedBy=multi-user.target
     )
     common.run("systemctl", ["daemon-reload"])
     common.restart("regress-stack-provider")
-
-
-def metadata() -> None:
-    context = common.context()
-    from regress_stack.modules import neutron, utils, ovn
-
-    utils.cfg_set(
-        neutron.METADATA_AGENT_CONF,
-        ("DEFAULT", "nova_metadata_host", context.deployment.api_address),
-        (
-            "DEFAULT",
-            "nova_metadata_port",
-            str(context.deployment.api_port(8775)),
-        ),
-        ("DEFAULT", "metadata_proxy_shared_secret", context.secret("neutron/metadata")),
-        ("ovs", "ovsdb_connection", ovn.local_connection()),
-        ("ovn", "ovn_sb_connection", ovn.sb_connection()),
-    )
-    common.restart("neutron-ovn-metadata-agent")

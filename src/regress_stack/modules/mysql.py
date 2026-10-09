@@ -4,6 +4,7 @@
 import logging
 import typing
 
+from regress_stack import topology
 from regress_stack.core import utils as core_utils
 
 LOG = logging.getLogger(__name__)
@@ -26,14 +27,7 @@ GRANT ALL PRIVILEGES ON {name}.* TO '{database}'@'%';
 
 
 def get_host():
-    from regress_stack.core.deployment import current
-
-    context = current()
-    if context is not None and context.deployment.profile == "control":
-        return f"{context.deployment.api_address}:3306"
-    if context is not None:
-        return "127.0.0.1:13306"
-    return "localhost"
+    return topology.database_host()
 
 
 def connection_string(database: str, username: str, password: str):
@@ -51,12 +45,8 @@ def ensure_service(name: str) -> typing.Tuple[str, str]:
     Returns:
         Tuple of (username, password).
     """
-    from regress_stack.core.deployment import current
-
-    if current() is not None:
-        from regress_stack.multinode.database import ensure_service as clustered_service
-
-        return clustered_service(name)
+    if topology.explicit():
+        return topology.database_account(name)
     password = "changeme"
 
     ensure_database(name)

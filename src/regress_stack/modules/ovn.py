@@ -9,6 +9,7 @@ import subprocess
 
 import pyroute2
 
+from regress_stack import topology
 from regress_stack.core import utils as core_utils
 
 LOG = logging.getLogger(__name__)
@@ -170,21 +171,9 @@ def _add_iptable_postrouting_rule(cidr: str, comment: str) -> None:
         core_utils.run(executable, ["--append", *rule_def])
 
 
-def local_connection() -> str:
-    from regress_stack.core.deployment import current
-
-    return "unix:/var/run/openvswitch/db.sock" if current() else OVSDB_CONNECTION
-
-
 def nb_connection() -> str:
-    from regress_stack.core.deployment import current
-    from regress_stack.multinode.networking import connections
-
-    return connections(current(), 6641) if current() else OVNNB_CONNECTION
+    return topology.ovn_database(6641)
 
 
 def sb_connection() -> str:
-    from regress_stack.core.deployment import current
-    from regress_stack.multinode.networking import connections
-
-    return connections(current(), 6642) if current() else OVNSB_CONNECTION
+    return topology.ovn_database(6642)

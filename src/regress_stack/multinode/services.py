@@ -7,8 +7,9 @@ from pathlib import Path
 import shutil
 import re
 
-from regress_stack.multinode import common, coordination, networking
-from regress_stack.modules import utils
+from regress_stack import topology
+from regress_stack.modules import keystone, neutron, ovn, utils
+from regress_stack.multinode import common, coordination
 
 
 CONFIGS = {
@@ -116,8 +117,6 @@ def prepare(name: str) -> None:
             ("coordination", "backend_url", coordination.connection_url(context)),
         )
     if name == "cinder":
-        from regress_stack.modules import keystone
-
         utils.cfg_set(
             CONFIGS[name],
             ("service_user", "send_service_user_token", "true"),
@@ -139,6 +138,23 @@ def prepare(name: str) -> None:
 
 def finish(name: str) -> None:
     if name == "neutron":
-        networking.metadata()
+        metadata_agent()
     if name == "cinder":
         common.restart("cinder-volume")
+
+
+def metadata_agent() -> None:
+    context = common.context()
+    utils.cfg_set(
+        neutron.METADATA_AGENT_CONF,
+        ("DEFAULT", "nova_metadata_host", context.deployment.api_address),
+        (
+            "DEFAULT",
+            "nova_metadata_port",
+            str(context.deployment.api_port(8775)),
+        ),
+        ("DEFAULT", "metadata_proxy_shared_secret", context.secret("neutron/metadata")),
+        ("ovs", "ovsdb_connection", topology.ovsdb_connection()),
+        ("ovn", "ovn_sb_connection", ovn.sb_connection()),
+    )
+    common.restart("neutron-ovn-metadata-agent")

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import regress_stack.modules
 from regress_stack.core import utils
+from regress_stack.multinode import setup as multinode_setup
 from regress_stack.core.modules import get_execution_order
 from regress_stack.cli.utils import collect_logs
 
@@ -27,10 +28,8 @@ def setup(target, inventory=None, node=None, preseed=None, export_preseeds=None)
             raise click.UsageError(
                 "Explicit profiles configure the complete local role; omit TARGET"
             )
-        from regress_stack.multinode.setup import run
-
         try:
-            run(inventory, node, preseed, export_preseeds)
+            multinode_setup.run(inventory, node, preseed, export_preseeds)
         except (ValueError, RuntimeError, OSError) as error:
             raise click.ClickException(str(error)) from None
         click.echo(

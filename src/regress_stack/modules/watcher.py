@@ -3,6 +3,7 @@
 
 import pathlib
 
+from regress_stack import topology
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import keystone, mysql, nova, rabbitmq
 from regress_stack.modules import utils as module_utils
@@ -18,12 +19,15 @@ TEMPEST_PACKAGES = ["watcher-tempest-plugin"]
 LOGS = ["/var/log/watcher/"]
 
 CONF = "/etc/watcher/watcher.conf"
-URL = f"http://{core_utils.my_ip()}:9322"
 SERVICE = "watcher"
 SERVICE_TYPE = "infra-optim"
 SERVICES = ("watcher-api", "watcher-decision-engine", "watcher-applier")
 
 TEST_INCLUDE_REGEXES = [r"watcher_tempest_plugin.tests.api"]
+
+
+def url() -> str:
+    return topology.service_url(9322)
 
 
 def determine_packages(no_tempest: bool = False) -> list[str]:
@@ -36,7 +40,7 @@ def determine_packages(no_tempest: bool = False) -> list[str]:
 def setup():
     db_user, db_pass = mysql.ensure_service(SERVICE)
     rabbit_user, rabbit_pass = rabbitmq.ensure_service(SERVICE)
-    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, URL)
+    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, url())
 
     module_utils.cfg_set(
         CONF,
@@ -63,7 +67,7 @@ def setup():
     for service in SERVICES:
         core_utils.run("systemctl", ["stop", service])
 
-    module_utils.bootstrap_sudo("watcher-db-manage", ["upgrade"], user=SERVICE)
+    topology.shared_sudo("watcher-db-manage", ["upgrade"], user=SERVICE)
     for service in SERVICES:
         core_utils.restart_service(service)
         core_utils.run("systemctl", ["is-active", "--quiet", service])

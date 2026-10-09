@@ -9,6 +9,7 @@ import stat
 import subprocess
 import time
 
+from regress_stack import topology
 from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import (
@@ -47,7 +48,6 @@ BASE_PACKAGES = [
 LOG = logging.getLogger(__name__)
 
 CONF = "/etc/nova/nova.conf"
-URL = f"http://{core_utils.my_ip()}:8774/v2.1"
 NOVA_CEPH_UUID = pathlib.Path("/etc/nova/ceph_uuid")
 SERVICE = "nova"
 SERVICE_TYPE = "compute"
@@ -64,6 +64,10 @@ NOVA_METADATA_PROCESS_GROUP = "nova-metadata"
 NOVA_PRIVSEP_HELPER = (
     "sudo /usr/bin/nova-rootwrap /etc/nova/rootwrap.conf privsep-helper"
 )
+
+
+def url() -> str:
+    return topology.service_url(8774, "/v2.1")
 
 
 def determine_packages(no_tempest: bool = False) -> list[str]:
@@ -86,39 +90,35 @@ def spice_packages() -> list[str]:
 
 
 def setup():
-    from regress_stack.core.deployment import current
-
-    context = current()
-    controller = context is None or context.is_controller
-    runs_compute = (
-        context is None or context.deployment.profile != "control" or not controller
-    )
+    controller = topology.is_controller()
+    runs_compute = topology.runs_compute()
+    database_settings = []
     if controller:
         db_user, db_pass = mysql.ensure_service(SERVICE)
         db_api_user, db_api_pass = mysql.ensure_service("nova_api")
         db_cell0_user, db_cell0_pass = mysql.ensure_service("nova_cell0")
+        database_settings = [
+            (
+                "database",
+                "connection",
+                mysql.connection_string(SERVICE, db_user, db_pass),
+            ),
+            ("database", "max_pool_size", "1"),
+            (
+                "api_database",
+                "connection",
+                mysql.connection_string("nova_api", db_api_user, db_api_pass),
+            ),
+            ("api_database", "max_pool_size", "1"),
+        ]
     rabbit_user, rabbit_pass = rabbitmq.ensure_service(SERVICE)
-    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, URL)
+    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, url())
+    libvirt_settings = []
+    if runs_compute:
+        libvirt_settings = [("libvirt", "virt_type", virt_type())]
     module_utils.cfg_set(
         CONF,
-        *(
-            [
-                (
-                    "database",
-                    "connection",
-                    mysql.connection_string(SERVICE, db_user, db_pass),
-                ),
-                ("database", "max_pool_size", "1"),
-                (
-                    "api_database",
-                    "connection",
-                    mysql.connection_string("nova_api", db_api_user, db_api_pass),
-                ),
-                ("api_database", "max_pool_size", "1"),
-            ]
-            if controller
-            else []
-        ),
+        *database_settings,
         ("DEFAULT", "transport_url", rabbitmq.transport_url(rabbit_user, rabbit_pass)),
         ("DEFAULT", "host", core_utils.fqdn()),
         ("DEFAULT", "my_ip", core_utils.my_ip()),
@@ -156,24 +156,16 @@ def setup():
         *module_utils.dict_to_cfg_set_args(
             "spice",
             {
-                "enabled": (
-                    "false"
-                    if context is not None and context.deployment.profile == "control"
-                    else "true"
-                ),
+                "enabled": str(topology.spice_console_enabled()).lower(),
                 "agent_enabled": "true",
-                "html5proxy_base_url": f"http://{core_utils.my_ip()}:6082/spice_auto.html",
+                "html5proxy_base_url": topology.service_url(6082, "/spice_auto.html"),
                 "server_listen": core_utils.my_ip(),
                 "server_proxyclient_address": core_utils.my_ip(),
                 "keymap": "en-us",
             },
         ),
-        *(
-            module_utils.dict_to_cfg_set_args("libvirt", {"virt_type": virt_type()})
-            if runs_compute
-            else []
-        ),
-        ("os_vif_ovs", "ovsdb_connection", ovn.local_connection()),
+        *libvirt_settings,
+        ("os_vif_ovs", "ovsdb_connection", topology.ovsdb_connection()),
     )
     _ensure_questing_compat()
 
@@ -210,7 +202,7 @@ def setup():
             ),
         )
 
-    if module_utils.bootstrap():
+    if topology.owns_shared_state():
         core_utils.sudo("nova-manage", ["api_db", "sync"], user="nova")
         core_utils.sudo(
             "nova-manage",
@@ -247,7 +239,8 @@ def setup():
     for _daemon in nova_daemons:
         core_utils.restart_service(_daemon)
 
-    if context is not None:
+    if topology.explicit():
+        # Explicit deployments discover hosts periodically from the scheduler.
         return
 
     # Give some time for nova-compute to be up before discovering hosts
@@ -271,9 +264,6 @@ def _api_runs_under_apache() -> bool:
 
 
 def _ensure_questing_compat() -> None:
-    from regress_stack.core.deployment import current
-
-    context = current()
     if _using_sudo_rs():
         _ensure_sudo_rs_rootwrap()
         module_utils.cfg_set(
@@ -281,7 +271,7 @@ def _ensure_questing_compat() -> None:
             ("nova_sys_admin", "helper_command", NOVA_PRIVSEP_HELPER),
             ("vif_plug_ovs_privileged", "helper_command", NOVA_PRIVSEP_HELPER),
         )
-    if (context is None or context.is_controller) and _api_runs_under_apache():
+    if topology.is_controller() and _api_runs_under_apache():
         _ensure_metadata_site()
 
 

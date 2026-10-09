@@ -10,7 +10,7 @@ import shutil
 from typing import TypedDict
 import uuid
 
-from regress_stack.core.deployment import Context
+from regress_stack.core.deployment import Context, private_read
 from regress_stack.multinode import common
 
 
@@ -174,8 +174,6 @@ def setup_osd(slot: int) -> None:
     if common.done(f"ceph-osd-{slot}"):
         return
     record = common.STATE / f"osd-{slot}.json"
-    from regress_stack.core.deployment import private_read
-
     if record.exists():
         identity: _OSDIdentity = json.loads(private_read(record))
     else:

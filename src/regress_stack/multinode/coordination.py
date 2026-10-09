@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 from typing import Literal
 from urllib.parse import urlencode
 
@@ -132,8 +133,6 @@ def setup() -> None:
     common.run("systemctl", ["stop", f"{name}-server", f"{name}-sentinel"])
     directory = Path("/var/lib/regress-stack-coordination")
     directory.mkdir(parents=True, exist_ok=True)
-    import shutil
-
     shutil.chown(directory, user=name)
     directory.chmod(0o700)
     server, sentinel = configuration(context)

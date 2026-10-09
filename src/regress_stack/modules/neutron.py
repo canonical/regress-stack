@@ -7,6 +7,7 @@ import ipaddress
 import logging
 import time
 
+from regress_stack import topology
 from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import keystone, mysql, ovn, rabbitmq
@@ -22,13 +23,16 @@ LOGS = ["/var/log/neutron/"]
 CONF = "/etc/neutron/neutron.conf"
 METADATA_AGENT_CONF = "/etc/neutron/neutron_ovn_metadata_agent.ini"
 ML2_CONF = "/etc/neutron/plugins/ml2/ml2_conf.ini"
-URL = f"http://{core_utils.my_ip()}:9696/"
 
 METADATA_SECRET = "bonjour"
 
 EXTERNAL_NETWORK = "external-network"
 
 NEUTRON_SPLIT_SERVICES_VERSION = "26.0.0"
+
+
+def url() -> str:
+    return topology.service_url(9696, "/")
 
 
 def determine_packages(no_tempest: bool = False) -> list[str]:
@@ -47,9 +51,6 @@ def determine_packages(no_tempest: bool = False) -> list[str]:
 
 
 def setup():
-    from regress_stack.core.deployment import current
-
-    context = current()
     # mask neutron-server if running flamingo.
     if (
         core_apt.PkgVersionCompare("python3-neutron", upstream=True)
@@ -59,7 +60,7 @@ def setup():
 
     db_user, db_pass = mysql.ensure_service("neutron")
     rabbit_user, rabbit_pass = rabbitmq.ensure_service("neutron")
-    username, password = keystone.ensure_service_account("neutron", "network", URL)
+    username, password = keystone.ensure_service_account("neutron", "network", url())
     module_utils.cfg_set(
         CONF,
         (
@@ -126,11 +127,9 @@ def setup():
                 "ovn_sb_connection": ovn.sb_connection(),
                 "ovn_l3_scheduler": "leastloaded",
                 "ovn_metadata_enabled": "true",
-                "enable_distributed_floating_ip": (
-                    "false"
-                    if context is not None and context.deployment.profile == "control"
-                    else "true"
-                ),
+                "enable_distributed_floating_ip": str(
+                    topology.distributed_floating_ips()
+                ).lower(),
                 "dhcp_default_lease_time": "600",
             },
         ),
@@ -139,10 +138,10 @@ def setup():
         METADATA_AGENT_CONF,
         ("DEFAULT", "nova_metadata_host", core_utils.fqdn()),
         ("DEFAULT", "metadata_proxy_shared_secret", metadata_secret()),
-        ("ovs", "ovsdb_connection", ovn.local_connection()),
+        ("ovs", "ovsdb_connection", topology.ovsdb_connection()),
         ("ovn", "ovn_sb_connection", ovn.sb_connection()),
     )
-    module_utils.bootstrap_sudo(
+    topology.shared_sudo(
         "neutron-db-manage",
         ["--config-file", CONF, "--config-file", ML2_CONF, "upgrade", "head"],
         user="neutron",
@@ -168,7 +167,7 @@ def setup():
         core_utils.restart_service(_daemon)
     core_utils.restart_service("neutron-ovn-metadata-agent")
 
-    if not module_utils.bootstrap():
+    if not topology.owns_shared_state():
         return
 
     # wait for neutron-server to accept http connections
@@ -202,23 +201,17 @@ def ensure_public_network():
 
     subnet = conn.network.find_subnet("external-subnet", ignore_missing=True)
     if not subnet:
-        ip_net = ipaddress.ip_network(ovn.EXTERNAL_CIDR)
-        hosts = list(ip_net.hosts())
-        gw = hosts[0]
-        first_host = hosts[1]
-        last_host = hosts[-2]
-        from regress_stack.core.deployment import current
-
-        context = current()
-        cidr = ovn.EXTERNAL_CIDR
-        if context:
-            provider = context.deployment.provider
+        if provider := topology.provider_network():
             cidr = provider.cidr
             gw, first_host, last_host = (
                 provider.gateway,
                 provider.allocation_start,
                 provider.allocation_end,
             )
+        else:
+            cidr = ovn.EXTERNAL_CIDR
+            hosts = list(ipaddress.ip_network(cidr).hosts())
+            gw, first_host, last_host = hosts[0], hosts[1], hosts[-2]
         conn.network.create_subnet(
             name="external-subnet",
             network_id=network.id,
@@ -297,8 +290,5 @@ def ensure_subnet_router(subnet, router):
         conn.network.add_interface_to_router(router, port_id=port.id)
 
 
-def metadata_secret():
-    from regress_stack.core.deployment import current
-
-    context = current()
-    return context.secret("neutron/metadata") if context else METADATA_SECRET
+def metadata_secret() -> str:
+    return topology.secret("neutron/metadata", METADATA_SECRET)

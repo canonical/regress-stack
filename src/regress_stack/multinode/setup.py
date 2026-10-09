@@ -16,6 +16,7 @@ import uuid
 
 from regress_stack.core import utils
 from regress_stack.core.deployment import Context, Deployment, activate
+from regress_stack.modules import keystone
 from regress_stack.multinode import (
     access,
     common,
@@ -52,8 +53,6 @@ def quiet_context(context: Context, *, bootstrap_only: bool = True) -> Iterator[
     }
     for name in levels:
         logging.getLogger(name).setLevel(logging.WARNING)
-    from regress_stack.modules import keystone
-
     keystone.o7k.cache_clear()
     try:
         with activate(context, bootstrap_only=bootstrap_only):
@@ -172,7 +171,7 @@ def run(
                 if common.done(f"service-{module.name}"):
                     continue
                 if module.name == "neutron" and not context.is_controller:
-                    networking.metadata()
+                    services.metadata_agent()
                 else:
                     services.prepare(module.name)
                     module.module.setup()

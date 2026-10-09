@@ -11,6 +11,7 @@ import secrets
 import uuid
 
 from regress_stack.core.deployment import Context, Secret, private_write
+from regress_stack.modules import cinder
 from regress_stack.multinode import common, coordination, storage
 
 
@@ -65,8 +66,6 @@ def generate(context: Context) -> None:
                 os.urandom(32)
             ).decode()
     if "cinder" not in context.deployment.disabled_modules:
-        from regress_stack.modules import cinder
-
         values["cinder/service-type"] = cinder.get_service_type()
     if "ceph" not in context.deployment.disabled_modules:
         values["ceph/fsid"] = str(uuid.uuid4())

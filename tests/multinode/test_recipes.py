@@ -18,7 +18,8 @@ from regress_stack.multinode import (
     preseed,
     storage,
 )
-from regress_stack.modules import keystone, mysql, rabbitmq, utils
+from regress_stack import topology
+from regress_stack.modules import keystone, mysql, rabbitmq
 
 
 def test_gr_config_never_persists_bootstrap(context):
@@ -78,7 +79,7 @@ def test_peer_consumes_credentials_without_creating_resources(peer, monkeypatch)
         assert keystone.ensure_service_account(
             "nova", "compute", "http://192.0.2.2:8774/v2.1"
         ) == ("nova", "identity_secret")
-        utils.bootstrap_sudo("nova-manage", ["db", "sync"])
+        topology.shared_sudo("nova-manage", ["db", "sync"])
     fail.assert_not_called()
 
 
@@ -90,12 +91,9 @@ def test_api_and_database_routing(context):
         assert f"{node.address}:3306 check" in config
         assert f"{node.address}:5000 check" in config
     with activate(context):
-        assert (
-            utils.endpoint("http://192.0.2.1:5000/v3/") == "http://192.0.2.10:15000/v3/"
-        )
-        assert (
-            utils.endpoint("http://192.0.2.10:15000/v3/")
-            == "http://192.0.2.10:15000/v3/"
+        assert keystone.auth_url() == "http://192.0.2.10:15000/v3/"
+        assert topology.service_url(6082, "/spice_auto.html") == (
+            "http://192.0.2.10:16082/spice_auto.html"
         )
         assert mysql.connection_string("nova", "nova", "pw").endswith(
             "@127.0.0.1:13306/nova"
@@ -571,7 +569,7 @@ def test_control_nova_starts_api_services_without_compute(context, monkeypatch):
     )
     cfg_set = Mock()
     monkeypatch.setattr(nova.module_utils, "cfg_set", cfg_set)
-    monkeypatch.setattr(nova.module_utils, "bootstrap", lambda: False)
+    monkeypatch.setattr(nova.topology, "owns_shared_state", lambda: False)
     monkeypatch.setattr(nova, "_ensure_questing_compat", Mock())
     monkeypatch.setattr(nova, "_api_runs_under_apache", lambda: False)
     monkeypatch.setattr(nova.ceph, "installed", lambda: False)
@@ -604,8 +602,8 @@ def test_control_neutron_centralizes_floating_ips(context, monkeypatch):
     )
     cfg_set = Mock()
     monkeypatch.setattr(neutron.module_utils, "cfg_set", cfg_set)
-    monkeypatch.setattr(neutron.module_utils, "bootstrap_sudo", Mock())
-    monkeypatch.setattr(neutron.module_utils, "bootstrap", lambda: False)
+    monkeypatch.setattr(neutron.topology, "shared_sudo", Mock())
+    monkeypatch.setattr(neutron.topology, "owns_shared_state", lambda: False)
     monkeypatch.setattr(
         neutron.core_apt, "PkgVersionCompare", lambda *_args, **_kwargs: "28.0.0"
     )

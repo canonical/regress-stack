@@ -4,6 +4,7 @@
 import logging
 import pathlib
 
+from regress_stack import topology
 from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import keystone, mysql, neutron, nova, rabbitmq
@@ -16,9 +17,6 @@ PACKAGES = ["heat-api", "heat-api-cfn", "heat-engine"]
 LOGS = ["/var/log/heat/"]
 
 CONF = "/etc/heat/heat.conf"
-URL = f"http://{core_utils.my_ip()}:8004"
-URL_CFN = URL + "/v1"
-URL_ORCHESTRATION = URL_CFN + "/%(tenant_id)s"
 SERVICE = "heat"
 SERVICE_CFN = "heat-cfn"
 SERVICE_TYPE = "orchestration"
@@ -29,10 +27,6 @@ HEAT_STACK_ADMIN_PASSWORD = "changeme"
 
 HEAT_STACK_OWNER = "heat_stack_owner"
 HEAT_STACK_USER = "heat_stack_user"
-
-URL_HEAT_METADATA = f"http://{core_utils.my_ip()}:8000"
-URL_HEAT_METADATA_WAIT = URL_HEAT_METADATA + "/v1/waitcondition"
-
 
 # tempest run --list --regex heat_tempest_plugin.tests.functional.test_nova_server_networks --regex '^(.(?!(test_create_update_server_add_subnet)))*$' --regex '^(.(?!(test_create_stack_with_multi_signal_waitcondition)))*$' --regex '^(.(?!(aodh)))*$ --regex ^(.(?!(test_extra_route_set)))*$'
 TEST_INCLUDE_REGEXES = [
@@ -47,18 +41,34 @@ TEST_EXCLUDE_REGEXES = [
 ]
 
 
+def cfn_url() -> str:
+    return topology.service_url(8004, "/v1")
+
+
+def orchestration_url() -> str:
+    return cfn_url() + "/%(tenant_id)s"
+
+
+def metadata_url() -> str:
+    return topology.service_url(8000)
+
+
+def waitcondition_url() -> str:
+    return metadata_url() + "/v1/waitcondition"
+
+
 def setup():
     db_user, db_pass = mysql.ensure_service(SERVICE)
     rabbit_user, rabbit_pass = rabbitmq.ensure_service(SERVICE)
     username, password = keystone.ensure_service_account(
-        SERVICE, SERVICE_TYPE, URL_ORCHESTRATION
+        SERVICE, SERVICE_TYPE, orchestration_url()
     )
     service_cfn = keystone.ensure_service(SERVICE_CFN, SERVICE_TYPE_CFN)
-    keystone.ensure_endpoint(service_cfn, URL_CFN)
+    keystone.ensure_endpoint(service_cfn, cfn_url())
     domain = keystone.ensure_domain(SERVICE)
     heat_stack_admin = keystone.ensure_user(
         HEAT_STACK_ADMIN,
-        module_utils.preseed_value("heat/domain", HEAT_STACK_ADMIN_PASSWORD),
+        topology.secret("heat/domain", HEAT_STACK_ADMIN_PASSWORD),
         domain.id,
     )
     keystone.grant_domain_role(heat_stack_admin, keystone.admin_role(), domain)
@@ -89,21 +99,21 @@ def setup():
         ("heat_api", "workers", "1"),
         ("heat_api_cfn", "workers", "1"),
         ("DEFAULT", "transport_url", rabbitmq.transport_url(rabbit_user, rabbit_pass)),
-        ("DEFAULT", "heat_metadata_server_url", URL_HEAT_METADATA),
-        ("DEFAULT", "heat_waitcondition_server_url", URL_HEAT_METADATA_WAIT),
+        ("DEFAULT", "heat_metadata_server_url", metadata_url()),
+        ("DEFAULT", "heat_waitcondition_server_url", waitcondition_url()),
         ("DEFAULT", "instance_driver", "heat.engine.nova"),
         *module_utils.dict_to_cfg_set_args(
             "DEFAULT",
             {
                 "stack_user_domain_id": domain.id,
                 "stack_domain_admin": HEAT_STACK_ADMIN,
-                "stack_domain_admin_password": module_utils.preseed_value(
+                "stack_domain_admin_password": topology.secret(
                     "heat/domain", HEAT_STACK_ADMIN_PASSWORD
                 ),
             },
         ),
     )
-    module_utils.bootstrap_sudo("heat-manage", ["db_sync"], user=SERVICE)
+    topology.shared_sudo("heat-manage", ["db_sync"], user=SERVICE)
     heat_daemons = ["heat-api", "heat-api-cfn", "heat-engine"]
     if (
         core_apt.PkgVersionCompare("python3-heat", upstream=True)

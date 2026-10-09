@@ -6,6 +6,8 @@ from pathlib import Path
 import uuid
 
 import regress_stack.modules
+from regress_stack.core.deployment import Context, Deployment
+from regress_stack.multinode.profiles import packages as local_packages
 from regress_stack.core.modules import get_execution_order
 
 
@@ -31,9 +33,6 @@ def packages(target=None, no_tempest=False, inventory=None, node=None, preseed=N
         apt install $(regress-stack packages nova)
     """
     if inventory or node or preseed:
-        from regress_stack.core.deployment import Context, Deployment
-        from regress_stack.multinode.profiles import packages as local_packages
-
         if (
             target
             or (inventory is None) == (preseed is None)

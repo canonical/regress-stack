@@ -3,6 +3,7 @@
 import pathlib
 import platform
 
+from regress_stack import topology
 from regress_stack.core import apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import (
@@ -24,8 +25,6 @@ LOGS = ["/var/log/magnum/"]
 
 CONF = "/etc/magnum/magnum.conf"
 AUTH_POLICY = "/etc/magnum/keystone_auth_default_policy.json"
-# Containers inside the coreos VM don't have DNS resolution necessarily working right
-URL = f"http://{core_utils.my_ip()}:9511/v1"
 SERVICE = "magnum"
 SERVICE_TYPE = "container-infra"
 MAGNUM_DOMAIN_ADMIN = "magnum_admin"
@@ -122,14 +121,19 @@ AUTH_POLICY_TPL = """
 """
 
 
+def url() -> str:
+    # Containers inside the coreos VM don't have DNS resolution necessarily working right
+    return topology.service_url(9511, "/v1")
+
+
 def setup():
     db_user, db_pass = mysql.ensure_service(SERVICE)
     rabbit_user, rabbit_pass = rabbitmq.ensure_service(SERVICE)
-    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, URL)
+    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, url())
     domain = keystone.ensure_domain(SERVICE)
     magnum_domain_admin = keystone.ensure_user(
         MAGNUM_DOMAIN_ADMIN,
-        module_utils.preseed_value("magnum/domain", MAGNUM_ADMIN_DOMAIN_PASSWORD),
+        topology.secret("magnum/domain", MAGNUM_ADMIN_DOMAIN_PASSWORD),
         domain.id,
     )
     keystone.grant_domain_role(magnum_domain_admin, keystone.admin_role(), domain)
@@ -157,7 +161,7 @@ def setup():
             {
                 "trustee_domain_name": SERVICE,
                 "trustee_domain_admin_name": MAGNUM_DOMAIN_ADMIN,
-                "trustee_domain_admin_password": module_utils.preseed_value(
+                "trustee_domain_admin_password": topology.secret(
                     "magnum/domain", MAGNUM_ADMIN_DOMAIN_PASSWORD
                 ),
                 # cluster user trust necessary if using cinder for volumes
@@ -166,7 +170,7 @@ def setup():
         ),
     )
     pathlib.Path(AUTH_POLICY).write_text(AUTH_POLICY_TPL)
-    module_utils.bootstrap_sudo("magnum-db-manage", ["upgrade"], user=SERVICE)
+    topology.shared_sudo("magnum-db-manage", ["upgrade"], user=SERVICE)
     core_utils.restart_service("magnum-api")
     core_utils.restart_service("magnum-conductor")
 

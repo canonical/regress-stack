@@ -14,7 +14,7 @@ from click.testing import CliRunner
 from regress_stack.cli.main import main
 from regress_stack.core.deployment import activate
 from regress_stack.multinode import setup
-from regress_stack.modules import utils
+from regress_stack import topology
 
 
 def test_compute_package_cli(context, tmp_path):
@@ -126,11 +126,11 @@ def test_tempest_explicit_state_runs_on_controllers_only(
 
 def test_runtime_resources_can_be_created_on_surviving_controller(peer):
     with activate(peer):
-        assert not utils.bootstrap()
+        assert not topology.owns_shared_state()
     with activate(peer, bootstrap_only=False):
-        assert utils.bootstrap()
+        assert topology.owns_shared_state()
     with activate(peer):
-        assert not utils.bootstrap()
+        assert not topology.owns_shared_state()
 
 
 def test_quiet_context_mutes_only_third_party_http_logging(context):

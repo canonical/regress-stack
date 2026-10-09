@@ -4,7 +4,7 @@
 import pathlib
 import subprocess
 
-from regress_stack.core import apt as core_apt
+from regress_stack import topology
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import barbican, ceph, keystone, mysql, rabbitmq
 from regress_stack.modules import utils as module_utils
@@ -15,7 +15,6 @@ PACKAGES = ["cinder-api", "cinder-scheduler", "cinder-volume"]
 LOGS = ["/var/log/cinder/"]
 
 CONF = "/etc/cinder/cinder.conf"
-URL = f"http://{core_utils.my_ip()}:8776/v3/%(project_id)s"
 SERVICE = "cinder"
 _LEGACY_SERVICE_TYPE = "volumev3"
 _SERVICE_TYPE = "block-storage"
@@ -29,12 +28,14 @@ CINDER_PRIVSEP_HELPER = (
 _TEMPEST_SERVICE_TYPE_VERSION = (42, 0, 0)
 
 
-def get_service_type() -> str:
-    from regress_stack.core.deployment import current
+def url() -> str:
+    return topology.service_url(8776, "/v3/%(project_id)s")
 
-    context = current()
-    if context and "cinder/service-type" in context.values:
-        return context.values["cinder/service-type"]
+
+def get_service_type() -> str:
+    # Explicit deployments freeze the catalog type chosen on the bootstrap node.
+    if preseeded := topology.preseeded("cinder/service-type"):
+        return preseeded
     version = core_utils.tempest_version()
     if version is not None and version >= _TEMPEST_SERVICE_TYPE_VERSION:
         return _SERVICE_TYPE
@@ -42,19 +43,14 @@ def get_service_type() -> str:
 
 
 def installed() -> bool:
-    from regress_stack.core.deployment import current
-
-    context = current()
-    if context is not None:
-        return "cinder" not in context.deployment.disabled_modules
-    return core_apt.pkgs_installed(PACKAGES)
+    return topology.installed(SERVICE, PACKAGES)
 
 
 def setup():
     db_user, db_pass = mysql.ensure_service(SERVICE)
     rabbit_user, rabbit_pass = rabbitmq.ensure_service(SERVICE)
     username, password = keystone.ensure_service_account(
-        SERVICE, get_service_type(), URL
+        SERVICE, get_service_type(), url()
     )
     pool = ceph.ensure_pool(VOLUME_POOL)
     ceph.ensure_authenticate(VOLUME_POOL, SERVICE)
@@ -109,7 +105,7 @@ def setup():
                 "key_manager", barbican.key_manager_cfg()
             ),
         )
-    module_utils.bootstrap_sudo("cinder-manage", ["db", "sync"], SERVICE)
+    topology.shared_sudo("cinder-manage", ["db", "sync"], SERVICE)
     core_utils.restart_apache()
     core_utils.restart_service("cinder-scheduler")
     core_utils.restart_service("cinder-volume")
@@ -152,10 +148,8 @@ def _ensure_sudo_rs_rootwrap() -> None:
     core_utils.run("visudo", ["-cf", str(CINDER_SUDOERS)])
 
 
-def _backend_host():
-    from regress_stack.core.deployment import current
-
-    return current().local.name if current() else f"{SERVICE}@{core_utils.fqdn()}"
+def _backend_host() -> str:
+    return topology.node_name() or f"{SERVICE}@{core_utils.fqdn()}"
 
 
 def configure_tempest(tempest_conf: pathlib.Path):
