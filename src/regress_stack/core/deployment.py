@@ -7,6 +7,7 @@ This module has no machine configuration or transport side effects. Inventories
 are public; generated preseeds are secrets and must be transferred by the caller.
 """
 
+from collections.abc import Iterator, Mapping
 import contextlib
 import contextvars
 import dataclasses
@@ -18,8 +19,9 @@ from pathlib import Path
 import re
 import stat
 import tempfile
-from typing import Iterator, Mapping, Optional
+from typing import Any
 import uuid
+
 import yaml
 
 
@@ -45,7 +47,7 @@ class Node:
     management_interface: str
     provider_interface: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not _NAME.fullmatch(self.name):
             raise ValueError("Node names must be lowercase DNS labels")
         _ipv4(self.address)
@@ -63,7 +65,7 @@ class ProviderNetwork:
     allocation_start: str
     allocation_end: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         network = ipaddress.IPv4Network(self.cidr)
         addresses = [
             ipaddress.IPv4Address(_ipv4(value))
@@ -111,7 +113,7 @@ class Deployment:
     schema: int = 1
     disabled_modules: tuple[str, ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if type(self.schema) is not int or self.schema != 1:
             raise ValueError("Unsupported inventory schema")
         object.__setattr__(self, "profile", Profile(self.profile))
@@ -175,7 +177,7 @@ class Deployment:
         """The port publishing a controller API port on the API address."""
         return port + _HA_PORT_OFFSET if self.highly_available else port
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {**dataclasses.asdict(self), "profile": self.profile.value}
 
     def node(self, name: str) -> Node:
@@ -189,7 +191,7 @@ class Deployment:
         return "controller" if node in self.controllers else "compute"
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Deployment":
+    def from_dict(cls, data: dict[str, Any]) -> "Deployment":
         try:
             return cls(
                 **{
@@ -222,7 +224,7 @@ class Secret:
     value: str
     recipients: frozenset[str]
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "Secret(<redacted>)"
 
 
@@ -236,7 +238,7 @@ class Context:
     deployment_id: str
     values: dict[str, str] = dataclasses.field(default_factory=dict, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.deployment.node(self.local_name)
         uuid.UUID(self.deployment_id)
         if not isinstance(self.values, dict) or any(
@@ -245,7 +247,7 @@ class Context:
         ):
             raise ValueError("Preseed values must be string pairs")
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Context(local_name={self.local_name!r}, values=<redacted>)"
 
     @property
@@ -302,7 +304,7 @@ class Context:
             )
             peer.write(directory / f"{node.name}.json")
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "schema": 1,
             "deployment": self.deployment.to_dict(),
@@ -364,12 +366,12 @@ def private_read(path: Path) -> str:
         return stream.read()
 
 
-_CURRENT: contextvars.ContextVar[Optional[Context]] = contextvars.ContextVar(
+_CURRENT: contextvars.ContextVar[Context | None] = contextvars.ContextVar(
     "deployment", default=None
 )
 
 
-def current() -> Optional[Context]:
+def current() -> Context | None:
     return _CURRENT.get()
 
 
