@@ -9,7 +9,7 @@ import regress_stack.modules
 from regress_stack.core import utils
 from regress_stack.multinode import setup as multinode_setup
 from regress_stack.core.modules import get_execution_order
-from regress_stack.cli.utils import collect_logs
+from regress_stack.cli.utils import EXPLICIT_ERRORS, collect_logs
 
 LOG = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def setup(target, inventory=None, node=None, preseed=None, export_preseeds=None)
             )
         try:
             multinode_setup.run(inventory, node, preseed, export_preseeds)
-        except (ValueError, RuntimeError, OSError) as error:
+        except EXPLICIT_ERRORS as error:
             raise click.ClickException(str(error)) from None
         click.echo(
             "Local setup complete; run 'regress-stack ready' after all nodes have joined."

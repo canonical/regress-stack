@@ -191,3 +191,12 @@ def test_sentinel_agreement_queries_every_live_controller(context, monkeypatch):
     assert "Sentinel primary agreement" not in readiness.check(context, "node3")
     masters["192.0.2.2"] = "192.0.2.2"
     assert "Sentinel primary agreement" in readiness.check(context, "node3")
+
+
+def test_unknown_unavailable_node_is_rejected(context):
+    import pytest
+
+    from regress_stack.multinode import readiness
+
+    with pytest.raises(ValueError, match="not in the deployment"):
+        readiness.check(context, "node9")

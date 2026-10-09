@@ -8,6 +8,7 @@ import regress_stack.modules
 from regress_stack.core.modules import get_execution_order
 from regress_stack.multinode import profiles
 from regress_stack.multinode import setup as multinode_setup
+from regress_stack.cli.utils import EXPLICIT_ERRORS
 
 
 @click.command("packages")
@@ -39,7 +40,7 @@ def packages(target=None, no_tempest=False, inventory=None, node=None, preseed=N
         try:
             context = multinode_setup.load(inventory, node, preseed)
             click.echo(" ".join(profiles.packages(context, no_tempest=no_tempest)))
-        except (ValueError, RuntimeError, OSError) as error:
+        except EXPLICIT_ERRORS as error:
             raise click.ClickException(str(error)) from None
         return
     try:

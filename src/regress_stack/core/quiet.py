@@ -11,7 +11,7 @@ from pathlib import Path
 import subprocess
 
 
-class CommandError(subprocess.CalledProcessError, RuntimeError):
+class CommandError(subprocess.CalledProcessError):
     """A subprocess failure retaining only the executable and exit status."""
 
 

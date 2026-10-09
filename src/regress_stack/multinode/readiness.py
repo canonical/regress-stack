@@ -6,14 +6,13 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 import json
 import logging
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 from regress_stack.core.deployment import Context, Node
 from regress_stack.modules import keystone
 from regress_stack.multinode import common, coordination, networking
 
 if TYPE_CHECKING:
-    from openstack.block_storage.v3._proxy import Proxy as BlockStorageProxy
     from openstack.connection import Connection
 
 LOG = logging.getLogger(__name__)
@@ -88,7 +87,19 @@ def queue_replicas_ready(rows: Sequence[QueueInfo], controller_count: int) -> bo
     )
 
 
-def volume_hosts(proxy: BlockStorageProxy) -> set[str]:
+class _Response(Protocol):
+    def raise_for_status(self) -> None: ...
+
+    def json(self) -> Any: ...
+
+
+class _RestProxy(Protocol):
+    """The REST call used from either block storage API version's proxy."""
+
+    def get(self, url: str, **kwargs: Any) -> _Response: ...
+
+
+def volume_hosts(proxy: _RestProxy) -> set[str]:
     # Older OpenStack SDKs lack the services resource wrapper.
     response = proxy.get("/os-services", params={"binary": "cinder-volume"})
     response.raise_for_status()
@@ -105,7 +116,8 @@ def check(context: Context, unavailable: str | None = None) -> list[str]:
     if not context.is_controller:
         raise ValueError("Run deployment readiness on a controller")
     if unavailable:
-        context.deployment.node(unavailable)
+        if unavailable not in {node.name for node in context.deployment.nodes}:
+            raise ValueError("The unavailable node is not in the deployment")
         if unavailable == context.local.name:
             raise ValueError("Run readiness on a surviving node")
         if not context.deployment.highly_available:

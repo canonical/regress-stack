@@ -21,10 +21,12 @@ from regress_stack.multinode import common
 PORT = 6379
 SENTINEL_PORT = 26379
 MASTER = "regress-stack"
-IMPLEMENTATIONS: tuple[Literal["valkey", "redis"], ...] = ("valkey", "redis")
+Implementation = Literal["valkey", "redis"]
+IMPLEMENTATIONS: tuple[Implementation, ...] = ("valkey", "redis")
 
 
-def implementation() -> Literal["valkey", "redis"]:
+def implementation() -> Implementation:
+    """The implementation available from the package archive."""
     cache = apt.get_cache()
     for name in IMPLEMENTATIONS:
         names = (f"{name}-server", f"{name}-sentinel")
@@ -45,10 +47,21 @@ def sentinel_auth_supported() -> bool:
     return comparison >= 0
 
 
+def configured(context: Context) -> Implementation:
+    """The implementation frozen in the preseed; it names commands and paths."""
+    return _checked(context.secret("coordination/implementation"))
+
+
+def _checked(name: str) -> Implementation:
+    for supported in IMPLEMENTATIONS:
+        if name == supported:
+            return supported
+    raise ValueError("Unsupported coordination implementation")
+
+
 def packages(context: Context) -> list[str]:
-    name = context.values.get("coordination/implementation") or implementation()
-    if name not in IMPLEMENTATIONS:
-        raise ValueError("Unsupported coordination implementation")
+    preseeded = context.values.get("coordination/implementation")
+    name = _checked(preseeded) if preseeded else implementation()
     return [f"{name}-server", f"{name}-sentinel", f"{name}-tools", "python3-redis"]
 
 
@@ -128,8 +141,7 @@ def setup() -> None:
         # Sentinel rewrites the configuration after election. Do not reinstate
         # the original bootstrap primary on reruns or recovery.
         return
-    name = context.secret("coordination/implementation")
-    packages(context)  # validate the implementation before using paths
+    name = configured(context)
     common.run("systemctl", ["stop", f"{name}-server", f"{name}-sentinel"])
     directory = Path("/var/lib/regress-stack-coordination")
     directory.mkdir(parents=True, exist_ok=True)
@@ -157,8 +169,7 @@ def setup() -> None:
 
 
 def _sentinel_command(context: Context, command: str, host: str | None = None) -> str:
-    name = context.secret("coordination/implementation")
-    packages(context)
+    name = configured(context)
     env = dict(os.environ)
     for key in ("REDISCLI_AUTH", "VALKEYCLI_AUTH"):
         env.pop(key, None)
@@ -202,8 +213,7 @@ def check_members(context: Context, unavailable: str | None = None) -> bool:
     ]
     primary = master_address(context)
     expected_replicas = {node.address for node in nodes if node.address != primary}
-    name = context.secret("coordination/implementation")
-    packages(context)
+    name = configured(context)
     for node in nodes:
         output = common.run(
             f"{name}-cli",

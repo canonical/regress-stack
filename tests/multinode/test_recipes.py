@@ -631,3 +631,19 @@ def test_keystone_preparation_starts_cache(context, monkeypatch, tmp_path):
     with activate(context):
         services.prepare("keystone")
     run.assert_any_call("systemctl", ["start", "memcached"])
+
+
+def test_wait_for_retries_failed_private_commands(monkeypatch):
+    from regress_stack.core.quiet import CommandError
+
+    attempts = []
+
+    def check():
+        attempts.append(None)
+        if len(attempts) == 1:
+            raise CommandError(1, ["ceph"])
+        return True
+
+    monkeypatch.setattr(common.time, "sleep", lambda _: None)
+    common.wait_for(check, "test")
+    assert len(attempts) == 2

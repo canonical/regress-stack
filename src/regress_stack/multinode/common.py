@@ -73,7 +73,7 @@ def wait_for(check: Callable[[], bool], description: str, timeout: float = 120) 
         try:
             if check():
                 return
-        except RuntimeError:
+        except (RuntimeError, CommandError):
             pass
         if time.monotonic() >= deadline:
             raise RuntimeError(f"Timed out waiting for {description}")

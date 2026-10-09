@@ -164,3 +164,17 @@ def test_sentinel_uses_routable_source_address(context):
 def test_sentinel_requires_election_quorum(context, monkeypatch, reply, expected):
     monkeypatch.setattr(coordination.common, "run", Mock(return_value=reply))
     assert coordination.check_quorum(context, context.local.address) is expected
+
+
+def test_configured_implementation_rejects_unknown_names(context):
+    import dataclasses
+
+    assert coordination.configured(context) == "valkey"
+    tampered = dataclasses.replace(
+        context,
+        values={**context.values, "coordination/implementation": "../../bin/sh"},
+    )
+    with pytest.raises(ValueError, match="Unsupported coordination"):
+        coordination.configured(tampered)
+    with pytest.raises(ValueError, match="Unsupported coordination"):
+        coordination.packages(tampered)

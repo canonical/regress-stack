@@ -64,7 +64,8 @@ def run(
             stderr=subprocess.STDOUT,
             bufsize=1,
         ) as process:
-            assert process.stdout is not None
+            if process.stdout is None:
+                raise RuntimeError("Test output pipe was not created")
             for line in process.stdout:
                 output = result_line(line)
                 if output is not None:

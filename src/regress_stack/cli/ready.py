@@ -7,6 +7,7 @@ import click
 
 from regress_stack.multinode import readiness
 from regress_stack.multinode.setup import LOCAL_STATE, quiet_context, read_state
+from regress_stack.cli.utils import EXPLICIT_ERRORS
 
 
 @click.command()
@@ -23,7 +24,7 @@ def ready(state, unavailable_node):
         context = read_state(state)
         with quiet_context(context, bootstrap_only=False):
             failures = readiness.check(context, unavailable_node)
-    except (ValueError, RuntimeError, OSError) as error:
+    except EXPLICIT_ERRORS as error:
         raise click.ClickException(str(error)) from None
     if failures:
         raise click.ClickException("Not ready: " + ", ".join(failures))
