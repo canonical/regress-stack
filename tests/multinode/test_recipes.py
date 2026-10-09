@@ -188,7 +188,7 @@ def test_storage_free_control_preseed_and_nova_config(context, monkeypatch):
     monkeypatch.setattr(coordination, "sentinel_auth_supported", lambda: True)
     forbidden = Mock(side_effect=AssertionError("Ceph must not be used"))
     monkeypatch.setattr(common, "run", forbidden)
-    preseed.generate(control)
+    control = dataclasses.replace(control, values=preseed.generate(control))
     assert not any(key.startswith(("ceph/", "cinder/")) for key in control.values)
     assert not any(
         key.startswith(("ceph/", "cinder/")) for key in preseed.contributions(control)
@@ -251,8 +251,7 @@ def test_generated_recovery_password_fits_mysql_channel(context, monkeypatch):
     from regress_stack.modules import cinder
 
     monkeypatch.setattr(cinder, "get_service_type", lambda: "volumev3")
-    preseed.generate(context)
-    password = context.secret("mysql/recovery")
+    password = preseed.generate(context)["mysql/recovery"]
     assert len(password) == 32
     assert common.token(password) == password
 
@@ -451,12 +450,10 @@ def test_preseed_freezes_sentinel_auth(context, monkeypatch, supported):
     monkeypatch.setattr(coordination, "sentinel_auth_supported", lambda: supported)
     monkeypatch.setattr(coordination.common, "run", lambda *args, **kwargs: "ceph-key")
     monkeypatch.setattr(cinder, "get_service_type", lambda: "volumev3")
-    preseed.generate(context)
-    password = context.secret("coordination/password")
+    values = preseed.generate(context)
+    password = values["coordination/password"]
     assert password
-    assert context.secret("coordination/sentinel-password") == (
-        password if supported else ""
-    )
+    assert values["coordination/sentinel-password"] == (password if supported else "")
 
 
 def test_wsgi_worker_limit_preserves_other_daemons(tmp_path, monkeypatch):

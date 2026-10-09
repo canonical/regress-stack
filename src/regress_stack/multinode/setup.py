@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import contextlib
+import dataclasses
 import fcntl
 import json
 import logging
@@ -156,12 +157,12 @@ def run(
             if seed and saved.deployment_id != context.deployment_id:
                 raise ValueError("Join preseed belongs to a different deployment")
             context = saved
-        elif context.is_bootstrap:
-            with quiet_context(context):
-                preseed.generate(context)
-            preseed.save(context, LOCAL_STATE)
         else:
-            preseed.save(context, LOCAL_STATE)
+            if context.is_bootstrap:
+                with quiet_context(context):
+                    values = preseed.generate(context)
+                context = dataclasses.replace(context, values=values)
+            context.write(LOCAL_STATE)
         with quiet_context(context):
             services.stop_unconfigured()
             # Deterministic local name resolution for RabbitMQ. No SSH is used.

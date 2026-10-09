@@ -226,6 +226,9 @@ class Secret:
         return "Secret(<redacted>)"
 
 
+_CONTEXT_FIELDS = {"schema", "deployment", "deployment_id", "local_name", "values"}
+
+
 @dataclasses.dataclass(repr=False)
 class Context:
     deployment: Deployment
@@ -288,28 +291,35 @@ class Context:
         for node in self.deployment.nodes:
             if node == self.local:
                 continue
-            payload = {
-                "schema": 1,
-                "deployment": self.deployment.to_dict(),
-                "deployment_id": self.deployment_id,
-                "local_name": node.name,
-                "values": {
+            peer = dataclasses.replace(
+                self,
+                local_name=node.name,
+                values={
                     key: secret.value
                     for key, secret in contributions.items()
                     if node.name in secret.recipients
                 },
-            }
-            private_write(
-                directory / f"{node.name}.json", json.dumps(payload, indent=2) + "\n"
             )
+            peer.write(directory / f"{node.name}.json")
+
+    def to_dict(self) -> dict:
+        return {
+            "schema": 1,
+            "deployment": self.deployment.to_dict(),
+            "deployment_id": self.deployment_id,
+            "local_name": self.local_name,
+            "values": dict(self.values),
+        }
+
+    def write(self, path: Path) -> None:
+        private_write(path, json.dumps(self.to_dict(), indent=2) + "\n")
 
     @classmethod
     def read(cls, path: Path) -> "Context":
         data = json.loads(private_read(path))
         if (
             not isinstance(data, dict)
-            or set(data)
-            != {"schema", "deployment", "deployment_id", "local_name", "values"}
+            or set(data) != _CONTEXT_FIELDS
             or type(data["schema"]) is not int
             or data["schema"] != 1
         ):

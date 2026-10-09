@@ -181,6 +181,26 @@ def test_export_scopes_secrets_to_recipient(inventory, tmp_path):
     assert "secret-value" not in repr(Secret("secret-value", frozenset()))
 
 
+def test_context_state_roundtrip(inventory, tmp_path):
+    ctx = Context(
+        dataclasses.replace(inventory, profile="control"),
+        "node2",
+        str(uuid.uuid4()),
+        {"keystone/admin": "secret"},
+    )
+    path = tmp_path / "context.json"
+    ctx.write(path)
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert json.loads(path.read_text())["deployment"]["profile"] == "control"
+    restored = Context.read(path)
+    assert restored.deployment == ctx.deployment
+    assert (restored.local_name, restored.deployment_id, restored.values) == (
+        ctx.local_name,
+        ctx.deployment_id,
+        ctx.values,
+    )
+
+
 def test_unknown_secret_recipient_rejected(inventory, tmp_path):
     ctx = Context(inventory, "node1", str(uuid.uuid4()))
     with pytest.raises(ValueError):

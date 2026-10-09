@@ -4,13 +4,12 @@
 from __future__ import annotations
 
 import base64
-import json
+from collections.abc import Callable
 import os
-from pathlib import Path
 import secrets
 import uuid
 
-from regress_stack.core.deployment import Context, Secret, private_write
+from regress_stack.core.deployment import Context, Secret
 from regress_stack.modules import cinder
 from regress_stack.multinode import common, coordination, storage
 
@@ -29,27 +28,68 @@ SERVICES = (
 )
 
 
-def generate(context: Context) -> None:
-    values: dict[str, str] = {}
-    for prefix in ("mysql", "rabbitmq", "keystone"):
-        for service in SERVICES:
-            values[f"{prefix}/{service}"] = secrets.token_hex(24)
-    for name in (
-        "mysql/nova_api",
-        "mysql/nova_cell0",
-        "mysql/recovery",
-        "mysql/check",
-        "rabbitmq/cookie",
-        "keystone/admin",
-        "neutron/metadata",
-        "coordination/password",
-        "heat/domain",
-        "magnum/domain",
-    ):
-        values[name] = secrets.token_hex(24)
-    # MySQL recovery channels accept at most 32 characters. URL-safe base64
-    # preserves 192 bits of entropy within that limit.
-    values["mysql/recovery"] = secrets.token_urlsafe(24)
+def _token() -> str:
+    return secrets.token_hex(24)
+
+
+def _key() -> str:
+    return base64.urlsafe_b64encode(os.urandom(32)).decode()
+
+
+def _uuid() -> str:
+    return str(uuid.uuid4())
+
+
+def _ceph_key() -> str:
+    return common.run("ceph-authtool", ["--gen-print-key"]).strip()
+
+
+def generate(context: Context) -> dict[str, str]:
+    """Generate every deployment secret on the bootstrap node."""
+    deployment = context.deployment
+    generators: dict[str, Callable[[], str]] = {
+        **{
+            f"{prefix}/{service}": _token
+            for prefix in ("mysql", "rabbitmq", "keystone")
+            for service in SERVICES
+        },
+        **dict.fromkeys(
+            (
+                "mysql/nova_api",
+                "mysql/nova_cell0",
+                "mysql/check",
+                "rabbitmq/cookie",
+                "keystone/admin",
+                "neutron/metadata",
+                "coordination/password",
+                "heat/domain",
+                "magnum/domain",
+            ),
+            _token,
+        ),
+        # MySQL recovery channels accept at most 32 characters. URL-safe base64
+        # preserves 192 bits of entropy within that limit.
+        "mysql/recovery": lambda: secrets.token_urlsafe(24),
+        "coordination/implementation": coordination.implementation,
+        "barbican/kek": _key,
+        "heat/auth_encryption_key": lambda: secrets.token_hex(16),
+        **{
+            f"keystone/{directory}/{number}": _key
+            for directory in ("fernet-keys", "credential-keys")
+            for number in ("0", "1")
+        },
+    }
+    if "cinder" not in deployment.disabled_modules:
+        generators["cinder/service-type"] = cinder.get_service_type
+    if "ceph" not in deployment.disabled_modules:
+        generators["ceph/fsid"] = _uuid
+        generators["ceph/rbd_uuid"] = _uuid
+        for name in [
+            *storage.CAPABILITIES,
+            *(f"mgr.{node.name}" for node in deployment.controllers),
+        ]:
+            generators[f"ceph/{name}"] = _ceph_key
+    values = {key: make() for key, make in generators.items()}
     # Tooz before 6.0 cannot authenticate to Sentinel; 6.0 requires the
     # same credentials as Redis. Freeze this choice for every controller.
     values["coordination/sentinel-password"] = (
@@ -57,27 +97,7 @@ def generate(context: Context) -> None:
         if coordination.sentinel_auth_supported()
         else ""
     )
-    values["coordination/implementation"] = coordination.implementation()
-    values["barbican/kek"] = base64.urlsafe_b64encode(os.urandom(32)).decode()
-    values["heat/auth_encryption_key"] = secrets.token_hex(16)
-    for directory in ("fernet-keys", "credential-keys"):
-        for number in ("0", "1"):
-            values[f"keystone/{directory}/{number}"] = base64.urlsafe_b64encode(
-                os.urandom(32)
-            ).decode()
-    if "cinder" not in context.deployment.disabled_modules:
-        values["cinder/service-type"] = cinder.get_service_type()
-    if "ceph" not in context.deployment.disabled_modules:
-        values["ceph/fsid"] = str(uuid.uuid4())
-        values["ceph/rbd_uuid"] = str(uuid.uuid4())
-        for name in [
-            *storage.CAPABILITIES,
-            *(f"mgr.{node.name}" for node in context.deployment.controllers),
-        ]:
-            values[f"ceph/{name}"] = common.run(
-                "ceph-authtool", ["--gen-print-key"]
-            ).strip()
-    context.values.update(values)
+    return values
 
 
 def contributions(context: Context) -> dict[str, Secret]:
@@ -104,20 +124,3 @@ def contributions(context: Context) -> dict[str, Secret]:
         result[key] = Secret(value, recipients)
     result.update(coordination.contribute(context))
     return result
-
-
-def save(context: Context, path: Path) -> None:
-    private_write(
-        path,
-        json.dumps(
-            {
-                "schema": 1,
-                "deployment": context.deployment.to_dict(),
-                "deployment_id": context.deployment_id,
-                "local_name": context.local_name,
-                "values": context.values,
-            },
-            indent=2,
-        )
-        + "\n",
-    )

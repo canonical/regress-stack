@@ -105,7 +105,7 @@ def test_tempest_explicit_state_runs_on_controllers_only(
 
     local = dataclasses.replace(context, local_name=local_name)
     state = tmp_path / "context.json"
-    setup.preseed.save(local, state)
+    local.write(state)
     seen = []
     monkeypatch.setattr(
         test_cli,
@@ -180,9 +180,7 @@ def test_bootstrap_setup_export_is_last(context, tmp_path, monkeypatch):
     monkeypatch.setattr(setup.common, "STATE", state)
     monkeypatch.setattr(setup, "LOCAL_STATE", state / "context.json")
     monkeypatch.setattr(setup, "local_preflight", Mock())
-    monkeypatch.setattr(
-        setup.preseed, "generate", lambda ctx: ctx.values.update(context.values)
-    )
+    monkeypatch.setattr(setup.preseed, "generate", lambda _ctx: dict(context.values))
     order = []
     monkeypatch.setattr(setup.common, "write", Mock())
     monkeypatch.setattr(setup.common, "done", lambda _: False)
