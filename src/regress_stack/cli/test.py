@@ -10,10 +10,12 @@ import subprocess
 
 import regress_stack.modules
 from regress_stack.core import utils
+from regress_stack.core.deployment import private_write
 from regress_stack.core.modules import get_execution_order
 from regress_stack.modules import keystone
 from regress_stack.modules import utils as module_utils
-from regress_stack.cli.utils import collect_logs
+from regress_stack.cli.utils import EXPLICIT_ERRORS, collect_logs
+from regress_stack.multinode.setup import LOCAL_STATE, quiet_context, read_state
 
 LOG = logging.getLogger(__name__)
 
@@ -34,10 +36,33 @@ LOG = logging.getLogger(__name__)
     default=0,
     help="Number of times to retry failed tests, defaults to 0 (no retries).",
 )
+@click.option(
+    "--state",
+    type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path),
+    help="Run against an explicit deployment using its saved local state.",
+)
 @utils.measure_time
-def test(concurrency, retry_failed):
+def test(concurrency, retry_failed, state):
     """Run the regression tests using Tempest."""
+    if state is None:
+        if LOCAL_STATE.exists():
+            raise click.UsageError(
+                f"This machine has explicit deployment state; pass --state {LOCAL_STATE}"
+            )
+        run_tempest(concurrency, retry_failed, collect_failure_logs=True)
+        return
+    try:
+        context = read_state(state)
+    except EXPLICIT_ERRORS as error:
+        raise click.ClickException(str(error)) from None
+    if not context.is_controller:
+        raise click.ClickException("Run Tempest from a controller")
+    with quiet_context(context, bootstrap_only=False):
+        # Legacy log collection prints unfiltered service logs.
+        run_tempest(concurrency, retry_failed, collect_failure_logs=False)
 
+
+def run_tempest(concurrency, retry_failed, collect_failure_logs: bool) -> None:
     env = os.environ.copy()
     env.update(keystone.auth_env())
     dir_name = "mycloud01"
@@ -57,7 +82,8 @@ def test(concurrency, retry_failed):
     # openstack.connect(cloud=...) which works on all versions.
     clouds_yaml = pathlib.Path(dir_name) / "clouds.yaml"
     auth = keystone.auth_env()
-    clouds_yaml.write_text(
+    private_write(
+        clouds_yaml,
         "clouds:\n"
         "  regress:\n"
         "    auth:\n"
@@ -68,7 +94,7 @@ def test(concurrency, retry_failed):
         f"      user_domain_name: {auth['OS_USER_DOMAIN_NAME']}\n"
         f"      project_domain_name: {auth['OS_PROJECT_DOMAIN_NAME']}\n"
         f"    region_name: {auth['OS_REGION_NAME']}\n"
-        f'    identity_api_version: "{auth["OS_IDENTITY_API_VERSION"]}"\n'
+        f'    identity_api_version: "{auth["OS_IDENTITY_API_VERSION"]}"\n',
     )
     env["OS_CLIENT_CONFIG_FILE"] = str(clouds_yaml.resolve())
 
@@ -90,6 +116,7 @@ def test(concurrency, retry_failed):
         cwd=dir_name,
     )
     tempest_conf = pathlib.Path(dir_name) / "etc" / "tempest.conf"
+    tempest_conf.chmod(0o600)
     module_utils.cfg_set(
         str(tempest_conf),
         ("validation", "image_ssh_user", "ubuntu"),
@@ -181,7 +208,8 @@ def test(concurrency, retry_failed):
             # Collect logs after the last retry to avoid collecting logs
             # multiple times in case of multiple retries.
             if retries > retry_failed:
-                collect_logs()
+                if collect_failure_logs:
+                    collect_logs()
                 raise
             else:
                 LOG.warning(

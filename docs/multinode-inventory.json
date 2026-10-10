@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "profile": "hyperconverged",
+  "controllers": [
+    {"name": "node1", "address": "192.0.2.11", "management_interface": "ens3", "provider_interface": "ens4"},
+    {"name": "node2", "address": "192.0.2.12", "management_interface": "ens3", "provider_interface": "ens4"},
+    {"name": "node3", "address": "192.0.2.13", "management_interface": "ens3", "provider_interface": "ens4"}
+  ],
+  "computes": [],
+  "api_address": "192.0.2.10",
+  "management_cidr": "192.0.2.0/24",
+  "provider": {
+    "cidr": "198.51.100.0/24",
+    "gateway": "198.51.100.1",
+    "allocation_start": "198.51.100.20",
+    "allocation_end": "198.51.100.80"
+  }
+}

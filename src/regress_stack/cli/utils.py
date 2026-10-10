@@ -2,10 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 import pathlib
+import subprocess
 
 import regress_stack.modules
 from regress_stack.core import utils
 from regress_stack.core.modules import get_execution_order
+
+# Failures of explicit deployment commands, reported without a traceback.
+# Private command errors carry only the executable name and exit status.
+EXPLICIT_ERRORS = (ValueError, RuntimeError, OSError, subprocess.CalledProcessError)
 
 
 def _output_log_file(path: pathlib.Path):
