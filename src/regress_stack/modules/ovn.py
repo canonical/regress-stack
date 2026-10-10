@@ -9,6 +9,7 @@ import subprocess
 
 import pyroute2
 
+from regress_stack import topology
 from regress_stack.core import utils as core_utils
 
 LOG = logging.getLogger(__name__)
@@ -168,3 +169,11 @@ def _add_iptable_postrouting_rule(cidr: str, comment: str) -> None:
     if not found:
         LOG.debug(f"Adding postrouting iptable rule for {cidr}")
         core_utils.run(executable, ["--append", *rule_def])
+
+
+def nb_connection() -> str:
+    return topology.ovn_database(6641)
+
+
+def sb_connection() -> str:
+    return topology.ovn_database(6642)

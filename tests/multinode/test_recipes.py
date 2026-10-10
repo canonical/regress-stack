@@ -1,6 +1,7 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+import dataclasses
 from unittest.mock import Mock
 
 import pytest
@@ -14,6 +15,8 @@ from regress_stack.multinode import (
     networking,
     storage,
 )
+from regress_stack import topology
+from regress_stack.modules import keystone, mysql, rabbitmq
 
 
 def test_gr_config_never_persists_bootstrap(context):
@@ -62,6 +65,59 @@ def test_failed_start_always_disables_bootstrap(context, monkeypatch):
     assert calls[-1] == "SET GLOBAL group_replication_bootstrap_group=OFF;"
 
 
+def test_peer_consumes_credentials_without_creating_resources(peer, monkeypatch):
+    fail = Mock(side_effect=AssertionError("join must not create deployment resources"))
+    monkeypatch.setattr(common, "sql", fail)
+    monkeypatch.setattr(common, "run", fail)
+    monkeypatch.setattr(keystone, "o7k", fail)
+    with activate(peer):
+        assert mysql.ensure_service("nova") == ("nova", "db_secret")
+        assert rabbitmq.ensure_service("nova") == ("nova", "rabbit_secret")
+        assert keystone.ensure_service_account(
+            "nova", "compute", "http://192.0.2.2:8774/v2.1"
+        ) == ("nova", "identity_secret")
+        topology.shared_sudo("nova-manage", ["db", "sync"])
+    fail.assert_not_called()
+
+
+def test_api_and_database_routing(context):
+    config = access.configuration(context)
+    assert "bind 192.0.2.10:15000" in config
+    assert "bind 127.0.0.1:13306" in config
+    for node in context.deployment.controllers:
+        assert f"{node.address}:3306 check" in config
+        assert f"{node.address}:5000 check" in config
+    with activate(context):
+        assert keystone.auth_url() == "http://192.0.2.10:15000/v3/"
+        assert topology.service_url(6082, "/spice_auto.html") == (
+            "http://192.0.2.10:16082/spice_auto.html"
+        )
+        assert mysql.connection_string("nova", "nova", "pw").endswith(
+            "@127.0.0.1:13306/nova"
+        )
+        assert (
+            rabbitmq.transport_url("nova", "pw")
+            == "rabbit://nova:pw@192.0.2.1:5672,nova:pw@192.0.2.2:5672,nova:pw@192.0.2.3:5672/openstack"
+        )
+
+
+def test_control_database_routing_uses_reachable_controller(context):
+    deployment = dataclasses.replace(
+        context.deployment,
+        profile="control",
+        controllers=context.deployment.controllers[:1],
+        api_address=context.deployment.controllers[0].address,
+    )
+    for local_name in ("node1", "compute1"):
+        node = dataclasses.replace(
+            context, deployment=deployment, local_name=local_name
+        )
+        with activate(node):
+            assert mysql.connection_string("nova", "nova", "pw").endswith(
+                "@192.0.2.1:3306/nova"
+            )
+
+
 def test_join_grows_existing_quorum_queues(peer, monkeypatch):
     monkeypatch.setattr(common, "done", lambda _: False)
     for name in ("write", "restart", "mark"):
@@ -88,6 +144,39 @@ def test_storage_replicates_across_hosts(context):
     assert "osd crush chooseleaf type = 1" in config
 
 
+def test_compute_setup_uses_client_credentials_and_only_starts_compute(
+    compute, monkeypatch
+):
+    from regress_stack.modules import nova, barbican
+
+    calls = []
+    monkeypatch.setattr(
+        nova.module_utils, "cfg_set", lambda path, *args: calls.extend(args)
+    )
+    monkeypatch.setattr(nova, "virt_type", lambda: "qemu")
+    monkeypatch.setattr(nova, "_ensure_questing_compat", Mock())
+    monkeypatch.setattr(nova, "ensure_libvirt_ceph_secret", lambda: "rbd-uuid")
+    monkeypatch.setattr(barbican, "installed", lambda: False)
+    forbidden = Mock(
+        side_effect=AssertionError("compute must not access database or run migrations")
+    )
+    monkeypatch.setattr(mysql, "ensure_service", forbidden)
+    monkeypatch.setattr(nova.core_utils, "sudo", forbidden)
+    restarted = Mock()
+    monkeypatch.setattr(nova.core_utils, "restart_service", restarted)
+    with activate(compute):
+        nova.setup()
+    forbidden.assert_not_called()
+    restarted.assert_called_once_with("nova-compute")
+    assert not any(section in ("database", "api_database") for section, _, _ in calls)
+    assert ("DEFAULT", "host", "compute1") in calls
+    assert (
+        "os_vif_ovs",
+        "ovsdb_connection",
+        "unix:/var/run/openvswitch/db.sock",
+    ) in calls
+
+
 def test_external_check_is_scoped_to_mysql(context):
     config = access.configuration(context)
     defaults, backends = config.split("listen mysql", 1)
@@ -107,6 +196,34 @@ def test_haproxy_helper_directory_is_traversable(context, tmp_path, monkeypatch)
     with activate(context):
         access.setup()
     assert helpers.stat().st_mode & 0o777 == 0o755
+
+
+@pytest.mark.parametrize("setup_phase", [True, False])
+def test_setup_client_uses_local_apis_and_runtime_uses_vip(
+    context, monkeypatch, setup_phase
+):
+    connect = Mock()
+    monkeypatch.setattr(keystone.openstack, "connect", connect)
+    monkeypatch.setattr(keystone.os, "environ", {})
+    keystone.reset_connection()
+    try:
+        with activate(context, bootstrap_only=setup_phase):
+            keystone.o7k()
+        options = connect.call_args.kwargs
+        if setup_phase:
+            assert options["auth_url"] == f"http://{context.local.address}:5000/v3/"
+            assert (
+                options["network_endpoint_override"]
+                == f"http://{context.local.address}:9696/v2.0"
+            )
+        else:
+            assert options == {"load_envvars": True}
+            assert (
+                keystone.os.environ["OS_AUTH_URL"]
+                == f"http://{context.deployment.api_address}:15000/v3/"
+            )
+    finally:
+        keystone.reset_connection()
 
 
 def test_ceph_join_selects_management_network(context):
@@ -193,6 +310,28 @@ def test_group_replication_syncs_each_relay_log_event(context):
     assert "sync_relay_log=1" in database.configuration(context)
 
 
+@pytest.mark.parametrize("controller", [True, False])
+def test_nova_metadata_compat_respects_local_role(
+    context, compute, monkeypatch, controller
+):
+    from regress_stack.modules import nova
+
+    metadata = Mock()
+    rootwrap = Mock()
+    monkeypatch.setattr(nova, "_using_sudo_rs", lambda: True)
+    monkeypatch.setattr(nova, "_api_runs_under_apache", lambda: True)
+    monkeypatch.setattr(nova, "_ensure_metadata_site", metadata)
+    monkeypatch.setattr(nova, "_ensure_sudo_rs_rootwrap", rootwrap)
+    monkeypatch.setattr(nova.module_utils, "cfg_set", Mock())
+    with activate(context if controller else compute):
+        nova._ensure_questing_compat()
+    rootwrap.assert_called_once()
+    if controller:
+        metadata.assert_called_once()
+    else:
+        metadata.assert_not_called()
+
+
 def test_new_osd_has_capacity_for_multinode_images(tmp_path, monkeypatch):
     from regress_stack.multinode import storage
 
@@ -220,6 +359,66 @@ def test_new_osd_has_capacity_for_multinode_images(tmp_path, monkeypatch):
     ) in calls
 
 
+def test_control_nova_starts_api_services_without_compute(context, monkeypatch):
+    from regress_stack.modules import nova
+
+    control = dataclasses.replace(
+        context, deployment=dataclasses.replace(context.deployment, profile="control")
+    )
+    monkeypatch.setattr(mysql, "ensure_service", lambda _: ("nova", "password"))
+    monkeypatch.setattr(rabbitmq, "ensure_service", lambda _: ("nova", "password"))
+    monkeypatch.setattr(
+        keystone, "ensure_service_account", lambda *_: ("nova", "password")
+    )
+    cfg_set = Mock()
+    monkeypatch.setattr(nova.module_utils, "cfg_set", cfg_set)
+    monkeypatch.setattr(nova.topology, "owns_shared_state", lambda: False)
+    monkeypatch.setattr(nova, "_ensure_questing_compat", Mock())
+    monkeypatch.setattr(nova, "_api_runs_under_apache", lambda: False)
+    monkeypatch.setattr(nova.ceph, "installed", lambda: False)
+    monkeypatch.setattr(nova.barbican, "installed", lambda: False)
+    monkeypatch.setattr(
+        nova, "virt_type", Mock(side_effect=AssertionError("no libvirt"))
+    )
+    restarted = Mock()
+    monkeypatch.setattr(nova.core_utils, "restart_service", restarted)
+    with activate(control):
+        nova.setup()
+    assert ("spice", "enabled", "false") in cfg_set.call_args.args
+    assert {call.args[0] for call in restarted.call_args_list} == {
+        "nova-api",
+        "nova-scheduler",
+        "nova-conductor",
+    }
+
+
+def test_control_neutron_centralizes_floating_ips(context, monkeypatch):
+    from regress_stack.modules import neutron
+
+    control = dataclasses.replace(
+        context, deployment=dataclasses.replace(context.deployment, profile="control")
+    )
+    monkeypatch.setattr(mysql, "ensure_service", lambda _: ("neutron", "password"))
+    monkeypatch.setattr(rabbitmq, "ensure_service", lambda _: ("neutron", "password"))
+    monkeypatch.setattr(
+        keystone, "ensure_service_account", lambda *_: ("neutron", "password")
+    )
+    cfg_set = Mock()
+    monkeypatch.setattr(neutron.module_utils, "cfg_set", cfg_set)
+    monkeypatch.setattr(neutron.topology, "shared_sudo", Mock())
+    monkeypatch.setattr(neutron.topology, "owns_shared_state", lambda: False)
+    monkeypatch.setattr(
+        neutron.core_apt, "PkgVersionCompare", lambda *_args, **_kwargs: "28.0.0"
+    )
+    monkeypatch.setattr(neutron.core_utils, "mask_server", Mock())
+    monkeypatch.setattr(neutron.core_utils, "restart_service", Mock())
+    with activate(control):
+        neutron.setup()
+    assert ("ovn", "enable_distributed_floating_ip", "false") in (
+        cfg_set.call_args_list[1].args
+    )
+
+
 def test_database_capacity_covers_three_controller_clients(context):
     assert "max_connections=500\n" in database.configuration(context)
 
@@ -238,3 +437,19 @@ def test_wait_for_retries_failed_private_commands(monkeypatch):
     monkeypatch.setattr(common.time, "sleep", lambda _: None)
     common.wait_for(check, "test")
     assert len(attempts) == 2
+
+
+def test_client_connection_is_cached_per_context_and_phase(context, peer, monkeypatch):
+    monkeypatch.setattr(keystone.openstack, "connect", lambda **_kwargs: object())
+    monkeypatch.setattr(keystone.os, "environ", {})
+    keystone.reset_connection()
+    try:
+        with activate(context):
+            setup = keystone.o7k()
+            assert keystone.o7k() is setup
+        with activate(context, bootstrap_only=False):
+            assert keystone.o7k() is not setup
+        with activate(peer):
+            assert keystone.o7k() is not setup
+    finally:
+        keystone.reset_connection()

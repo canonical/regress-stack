@@ -7,6 +7,7 @@ import os
 import pathlib
 import typing
 
+from regress_stack import topology
 from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import keystone, mysql, rabbitmq
@@ -23,7 +24,6 @@ _BASE_PACKAGES = [
 LOGS = ["/var/log/barbican"]
 
 CONF = "/etc/barbican/barbican.conf"
-URL = f"http://{core_utils.my_ip()}:9311/"
 SERVICE = "barbican"
 SERVICE_TYPE = "key-manager"
 BARBICAN_ROLES = [
@@ -84,6 +84,10 @@ BARBICAN_PLUGIN_NO_IMG_DIR = "4.0.0"
 TEMPEST_NO_IMG_DIR = (26, 0, 0)
 
 
+def url() -> str:
+    return topology.service_url(9311, "/")
+
+
 def determine_packages(no_tempest: bool = False) -> list[str]:
     """Determine the packages to install for this module."""
 
@@ -97,7 +101,7 @@ def determine_packages(no_tempest: bool = False) -> list[str]:
 def setup():
     db_user, db_pass = mysql.ensure_service(SERVICE)
     rabbit_user, rabbit_pass = rabbitmq.ensure_service(SERVICE)
-    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, URL)
+    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, url())
     for role in BARBICAN_ROLES:
         keystone.ensure_role(role)
     module_utils.cfg_set(
@@ -139,9 +143,13 @@ def setup():
             "enforce_new_defaults",
             "false" if _barbican_plugin_needs_img_dir() else "true",
         ),
-        ("simple_crypto_plugin", "kek", SIMPLE_CRYPTO_KEK),
+        (
+            "simple_crypto_plugin",
+            "kek",
+            topology.secret("barbican/kek", SIMPLE_CRYPTO_KEK),
+        ),
     )
-    core_utils.sudo(
+    topology.shared_sudo(
         "barbican-manage",
         ["--config-file", CONF, "db", "upgrade"],
         user=SERVICE,
@@ -154,7 +162,7 @@ def installed() -> bool:
 
 
 def key_manager_cfg() -> typing.Dict[str, str]:
-    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, URL)
+    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, url())
     cfg = keystone.account_dict(username, password)
     cfg["backend"] = "barbican"
     return cfg

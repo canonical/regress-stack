@@ -252,7 +252,7 @@ def playground():
         # Generate user credentials file
         with utils.measure("Generate user credentials"):
             LOG.info("Generating user credentials file")
-            auth_url = keystone.OS_AUTH_URL
+            auth_url = keystone.auth_url()
 
             user_rc_content = f"""# Demo user credentials for OpenStack
 export OS_USERNAME={DEMO_USER}

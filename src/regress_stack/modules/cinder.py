@@ -4,7 +4,7 @@
 import pathlib
 import subprocess
 
-from regress_stack.core import apt as core_apt
+from regress_stack import topology
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import barbican, ceph, keystone, mysql, rabbitmq
 from regress_stack.modules import utils as module_utils
@@ -15,7 +15,6 @@ PACKAGES = ["cinder-api", "cinder-scheduler", "cinder-volume"]
 LOGS = ["/var/log/cinder/"]
 
 CONF = "/etc/cinder/cinder.conf"
-URL = f"http://{core_utils.my_ip()}:8776/v3/%(project_id)s"
 SERVICE = "cinder"
 _LEGACY_SERVICE_TYPE = "volumev3"
 _SERVICE_TYPE = "block-storage"
@@ -29,7 +28,14 @@ CINDER_PRIVSEP_HELPER = (
 _TEMPEST_SERVICE_TYPE_VERSION = (42, 0, 0)
 
 
-def get_service_type():
+def url() -> str:
+    return topology.service_url(8776, "/v3/%(project_id)s")
+
+
+def get_service_type() -> str:
+    # Explicit deployments freeze the catalog type chosen on the bootstrap node.
+    if preseeded := topology.preseeded("cinder/service-type"):
+        return preseeded
     version = core_utils.tempest_version()
     if version is not None and version >= _TEMPEST_SERVICE_TYPE_VERSION:
         return _SERVICE_TYPE
@@ -37,14 +43,14 @@ def get_service_type():
 
 
 def installed() -> bool:
-    return core_apt.pkgs_installed(PACKAGES)
+    return topology.installed(SERVICE, PACKAGES)
 
 
 def setup():
     db_user, db_pass = mysql.ensure_service(SERVICE)
     rabbit_user, rabbit_pass = rabbitmq.ensure_service(SERVICE)
     username, password = keystone.ensure_service_account(
-        SERVICE, get_service_type(), URL
+        SERVICE, get_service_type(), url()
     )
     pool = ceph.ensure_pool(VOLUME_POOL)
     ceph.ensure_authenticate(VOLUME_POOL, SERVICE)
@@ -86,7 +92,7 @@ def setup():
                 "rbd_max_clone_depth": "5",
                 "rbd_store_chunk_size": "4",
                 "rbd_exclusive_cinder_pool": "true",
-                "backend_host": f"{SERVICE}@{core_utils.fqdn()}",
+                "backend_host": _backend_host(),
             },
         ),
     )
@@ -99,7 +105,7 @@ def setup():
                 "key_manager", barbican.key_manager_cfg()
             ),
         )
-    core_utils.sudo("cinder-manage", ["db", "sync"], SERVICE)
+    topology.shared_sudo("cinder-manage", ["db", "sync"], SERVICE)
     core_utils.restart_apache()
     core_utils.restart_service("cinder-scheduler")
     core_utils.restart_service("cinder-volume")
@@ -140,3 +146,42 @@ def _ensure_sudo_rs_rootwrap() -> None:
     CINDER_SUDOERS.write_text(contents)
     CINDER_SUDOERS.chmod(0o440)
     core_utils.run("visudo", ["-cf", str(CINDER_SUDOERS)])
+
+
+def _backend_host() -> str:
+    return topology.node_name() or f"{SERVICE}@{core_utils.fqdn()}"
+
+
+def configure_tempest(tempest_conf: pathlib.Path):
+    if get_service_type() != _SERVICE_TYPE:
+        return
+    # Packaged python-tempestconf versions that only recognize volumev3
+    # disable Cinder discovery when the catalog uses block-storage.
+    proxy = keystone.o7k().block_storage
+    endpoint = proxy.get_endpoint_data()
+    services = proxy.get("/os-services", params={"binary": "cinder-backup"})
+    services.raise_for_status()
+    pools = proxy.get("/scheduler-stats/get_pools")
+    pools.raise_for_status()
+    backends = sorted(
+        {
+            pool["name"].split("@", 1)[1].split("#", 1)[0]
+            for pool in pools.json()["pools"]
+        }
+    )
+    backup = any(
+        service["state"] == "up" and service["status"] == "enabled"
+        for service in services.json()["services"]
+    )
+    options = [
+        ("service_available", "cinder", "True"),
+        ("volume", "catalog_type", _SERVICE_TYPE),
+        ("volume", "backend_names", ",".join(backends)),
+        ("volume-feature-enabled", "multi_backend", str(len(backends) > 1)),
+        ("volume-feature-enabled", "backup", str(backup)),
+    ]
+    for name in ("min_microversion", "max_microversion"):
+        version = getattr(endpoint, name)
+        if version is not None:
+            options.append(("volume", name, ".".join(map(str, version))))
+    module_utils.cfg_set(str(tempest_conf), *options)

@@ -8,7 +8,7 @@ import typing
 import uuid
 from pathlib import Path
 
-from regress_stack.core import apt as core_apt
+from regress_stack import topology
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import utils as module_utils
 
@@ -37,7 +37,7 @@ OSD_SIZE_GB = 2
 
 
 def installed() -> bool:
-    return core_apt.pkgs_installed(PACKAGES)
+    return topology.installed("ceph", PACKAGES)
 
 
 def setup():
@@ -329,6 +329,9 @@ def setup_osd(i: int) -> Path:
 
 
 def ensure_pool(name: str) -> str:
+    if topology.explicit():
+        # Explicit deployments create their pools in multinode.storage.
+        return name
     pools = core_utils.run("ceph", ["osd", "pool", "ls"]).splitlines()
     for pool in pools:
         if name == pool.strip():
@@ -339,6 +342,10 @@ def ensure_pool(name: str) -> str:
 
 def ensure_authenticate(pool: str, user: typing.Optional[str] = None) -> Path:
     keyring = Path(f"/etc/ceph/ceph.client.{pool}.keyring")
+    if topology.explicit():
+        if not keyring.exists():
+            raise RuntimeError("Missing preseeded Ceph client keyring")
+        return keyring
     if keyring.exists():
         return keyring
     core_utils.run(
@@ -368,11 +375,19 @@ def ensure_authenticate(pool: str, user: typing.Optional[str] = None) -> Path:
 
 
 def get_key(user: str) -> str:
+    if topology.explicit():
+        return topology.deployment_secret(f"ceph/client.{user}")
     return core_utils.run("ceph", ["auth", "get-key", f"client.{user}"]).strip()
 
 
-@functools.lru_cache
 def rbd_uuid() -> str:
+    if topology.explicit():
+        return topology.deployment_secret("ceph/rbd_uuid")
+    return _local_rbd_uuid()
+
+
+@functools.lru_cache
+def _local_rbd_uuid() -> str:
     if RBD_UUID.exists():
         return RBD_UUID.read_text().strip()
     uuid_str = str(uuid.uuid4())

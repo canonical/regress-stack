@@ -2,8 +2,41 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 import subprocess
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
 
 from regress_stack.modules import nova
+
+
+def test_nova_packages_include_qemu_spice_support():
+    assert "qemu-system-modules-spice" in nova.determine_packages()
+
+
+@pytest.mark.parametrize(
+    ("version", "spice_package"),
+    [
+        ("1:6.2+dfsg-2ubuntu6.31", "qemu-system-common"),
+        ("1:7.2+dfsg-7ubuntu1", "qemu-system-common"),
+        ("1:8.1.0+ds-2", "qemu-system-modules-spice"),
+        ("1:8.2.2+ds-0ubuntu1", "qemu-system-modules-spice"),
+        ("1:10.2.1+ds-1ubuntu3", "qemu-system-modules-spice"),
+    ],
+)
+def test_nova_selects_spice_package_by_qemu_candidate(
+    monkeypatch, version, spice_package
+):
+    cache = Mock()
+    cache.__getitem__ = Mock(
+        return_value=SimpleNamespace(
+            candidate=SimpleNamespace(version=version),
+            installed=SimpleNamespace(version="1:6.2+dfsg-2ubuntu6.31"),
+        )
+    )
+    monkeypatch.setattr(nova.core_apt.apt, "Cache", lambda: cache)
+    packages = nova.determine_packages()
+    assert packages == [*nova.BASE_PACKAGES, spice_package]
 
 
 def test_using_sudo_rs(monkeypatch):

@@ -1,7 +1,34 @@
 # Copyright 2025 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+from types import SimpleNamespace
+
+from regress_stack.core import deployment
 from regress_stack.modules import keystone
+
+
+def test_service_account_receives_service_role(monkeypatch):
+    assignments = []
+    identity = SimpleNamespace(
+        assign_project_role_to_user=lambda project, user, role: assignments.append(
+            (project, user, role)
+        )
+    )
+    monkeypatch.setattr(deployment, "current", lambda: None)
+    monkeypatch.setattr(keystone, "ensure_user", lambda *_args: "user-id")
+    monkeypatch.setattr(keystone, "service_domain", lambda: "domain-id")
+    monkeypatch.setattr(keystone, "service_project", lambda: "project-id")
+    monkeypatch.setattr(keystone, "ensure_admin", lambda *_args: None)
+    monkeypatch.setattr(keystone, "ensure_role", lambda name: SimpleNamespace(id=name))
+    monkeypatch.setattr(keystone, "o7k", lambda: SimpleNamespace(identity=identity))
+    monkeypatch.setattr(keystone, "ensure_service", lambda *_args: "service-id")
+    monkeypatch.setattr(keystone, "ensure_endpoint", lambda *_args: None)
+
+    assert keystone.ensure_service_account("nova", "compute", "http://api") == (
+        "nova",
+        "changeme",
+    )
+    assert assignments == [("project-id", "user-id", "service")]
 
 
 def test_ensure_wsgi_scripts(tmp_path, monkeypatch):
