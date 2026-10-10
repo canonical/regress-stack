@@ -43,6 +43,7 @@ files = [
     "src/regress_stack/core/deployment.py",
     "src/regress_stack/core/quiet.py",
     "src/regress_stack/core/results.py",
+    "src/regress_stack/multinode",
 ]
 python_version = "3.10"
 strict = true
