@@ -2,9 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 import click
+from pathlib import Path
 
 import regress_stack.modules
 from regress_stack.core.modules import get_execution_order
+from regress_stack.multinode import profiles
+from regress_stack.multinode import setup as multinode_setup
+from regress_stack.cli.utils import EXPLICIT_ERRORS
 
 
 @click.command("packages")
@@ -14,7 +18,10 @@ from regress_stack.core.modules import get_execution_order
     help="Do not include tempest related packages, this is useful when using the tempest snap.",
 )
 @click.argument("target", required=False)
-def packages(target=None, no_tempest=False):
+@click.option("--inventory", type=click.Path(exists=True, path_type=Path))
+@click.option("--node")
+@click.option("--preseed", type=click.Path(exists=True, path_type=Path))
+def packages(target=None, no_tempest=False, inventory=None, node=None, preseed=None):
     """List packages needed to reach the specified target.
 
     If no target is specified, lists packages for all modules.
@@ -25,6 +32,17 @@ def packages(target=None, no_tempest=False):
         regress-stack packages --no-tempest nova
         apt install $(regress-stack packages nova)
     """
+    if inventory or node or preseed:
+        if target:
+            raise click.UsageError(
+                "Explicit profiles list a complete local role; omit TARGET"
+            )
+        try:
+            context = multinode_setup.load(inventory, node, preseed)
+            click.echo(" ".join(profiles.packages(context, no_tempest=no_tempest)))
+        except EXPLICIT_ERRORS as error:
+            raise click.ClickException(str(error)) from None
+        return
     try:
         # Get execution order without filtering for missing dependencies
         execution_order = get_execution_order(
