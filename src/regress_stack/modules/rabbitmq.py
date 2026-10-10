@@ -4,6 +4,7 @@
 import json
 import logging
 
+from regress_stack import topology
 from regress_stack.core import utils as core_utils
 
 LOG = logging.getLogger(__name__)
@@ -20,7 +21,10 @@ def setup():
 
 
 def transport_url(username: str, password: str):
-    return f"rabbit://{username}:{password}@localhost:5672/{VHOST}"
+    hosts = ",".join(
+        f"{username}:{password}@{host}:5672" for host in topology.messaging_hosts()
+    )
+    return f"rabbit://{hosts}/{VHOST}"
 
 
 def ensure_vhost(name: str):
@@ -33,6 +37,8 @@ def ensure_vhost(name: str):
 
 
 def ensure_service(name: str):
+    if topology.explicit():
+        return topology.messaging_account(name)
     password = "changeme"
     ensure_user(name, password)
     ensure_permissions(name, VHOST)

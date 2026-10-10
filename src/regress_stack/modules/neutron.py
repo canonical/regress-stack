@@ -7,6 +7,7 @@ import ipaddress
 import logging
 import time
 
+from regress_stack import topology
 from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import keystone, mysql, ovn, rabbitmq
@@ -22,13 +23,16 @@ LOGS = ["/var/log/neutron/"]
 CONF = "/etc/neutron/neutron.conf"
 METADATA_AGENT_CONF = "/etc/neutron/neutron_ovn_metadata_agent.ini"
 ML2_CONF = "/etc/neutron/plugins/ml2/ml2_conf.ini"
-URL = f"http://{core_utils.my_ip()}:9696/"
 
 METADATA_SECRET = "bonjour"
 
 EXTERNAL_NETWORK = "external-network"
 
 NEUTRON_SPLIT_SERVICES_VERSION = "26.0.0"
+
+
+def url() -> str:
+    return topology.service_url(9696, "/")
 
 
 def determine_packages(no_tempest: bool = False) -> list[str]:
@@ -56,7 +60,7 @@ def setup():
 
     db_user, db_pass = mysql.ensure_service("neutron")
     rabbit_user, rabbit_pass = rabbitmq.ensure_service("neutron")
-    username, password = keystone.ensure_service_account("neutron", "network", URL)
+    username, password = keystone.ensure_service_account("neutron", "network", url())
     module_utils.cfg_set(
         CONF,
         (
@@ -119,11 +123,13 @@ def setup():
         *module_utils.dict_to_cfg_set_args(
             "ovn",
             {
-                "ovn_nb_connection": ovn.OVNNB_CONNECTION,
-                "ovn_sb_connection": ovn.OVNSB_CONNECTION,
+                "ovn_nb_connection": ovn.nb_connection(),
+                "ovn_sb_connection": ovn.sb_connection(),
                 "ovn_l3_scheduler": "leastloaded",
                 "ovn_metadata_enabled": "true",
-                "enable_distributed_floating_ip": "true",
+                "enable_distributed_floating_ip": str(
+                    topology.distributed_floating_ips()
+                ).lower(),
                 "dhcp_default_lease_time": "600",
             },
         ),
@@ -131,11 +137,11 @@ def setup():
     module_utils.cfg_set(
         METADATA_AGENT_CONF,
         ("DEFAULT", "nova_metadata_host", core_utils.fqdn()),
-        ("DEFAULT", "metadata_proxy_shared_secret", METADATA_SECRET),
-        ("ovs", "ovsdb_connection", ovn.OVSDB_CONNECTION),
-        ("ovn", "ovn_sb_connection", ovn.OVNSB_CONNECTION),
+        ("DEFAULT", "metadata_proxy_shared_secret", metadata_secret()),
+        ("ovs", "ovsdb_connection", topology.ovsdb_connection()),
+        ("ovn", "ovn_sb_connection", ovn.sb_connection()),
     )
-    core_utils.sudo(
+    topology.shared_sudo(
         "neutron-db-manage",
         ["--config-file", CONF, "--config-file", ML2_CONF, "upgrade", "head"],
         user="neutron",
@@ -160,6 +166,9 @@ def setup():
     for _daemon in neutron_daemons:
         core_utils.restart_service(_daemon)
     core_utils.restart_service("neutron-ovn-metadata-agent")
+
+    if not topology.owns_shared_state():
+        return
 
     # wait for neutron-server to accept http connections
     for _ in range(10):
@@ -192,16 +201,22 @@ def ensure_public_network():
 
     subnet = conn.network.find_subnet("external-subnet", ignore_missing=True)
     if not subnet:
-        ip_net = ipaddress.ip_network(ovn.EXTERNAL_CIDR)
-        hosts = list(ip_net.hosts())
-        gw = hosts[0]
-        first_host = hosts[1]
-        last_host = hosts[-2]
+        if provider := topology.provider_network():
+            cidr = provider.cidr
+            gw, first_host, last_host = (
+                provider.gateway,
+                provider.allocation_start,
+                provider.allocation_end,
+            )
+        else:
+            cidr = ovn.EXTERNAL_CIDR
+            hosts = list(ipaddress.ip_network(cidr).hosts())
+            gw, first_host, last_host = hosts[0], hosts[1], hosts[-2]
         conn.network.create_subnet(
             name="external-subnet",
             network_id=network.id,
             ip_version=4,
-            cidr=ovn.EXTERNAL_CIDR,
+            cidr=cidr,
             gateway_ip=str(gw),
             allocation_pools=[{"start": str(first_host), "end": str(last_host)}],
             enable_dhcp=False,
@@ -273,3 +288,7 @@ def ensure_subnet_router(subnet, router):
         LOG.debug("Reattaching port %r to router %r...", port.name, router)
         conn.network.remove_interface_from_router(port.device_id, port_id=port.id)
         conn.network.add_interface_to_router(router, port_id=port.id)
+
+
+def metadata_secret() -> str:
+    return topology.secret("neutron/metadata", METADATA_SECRET)

@@ -9,7 +9,9 @@ import typing
 
 import openstack
 
+from regress_stack import topology
 from regress_stack.core import utils as core_utils
+from regress_stack.core.deployment import private_write
 from regress_stack.modules import mysql, utils
 from regress_stack.modules import utils as module_utils
 
@@ -26,7 +28,6 @@ ADMIN_PASSWORD = "changeme"
 ADMIN_USERNAME = "admin"
 ADMIN_PROJECT = "admin"
 DEFAULT_DOMAIN_NAME = "Default"
-OS_AUTH_URL = f"http://{core_utils.my_ip()}:5000/v3/"
 SERVICE_DOMAIN = "service"
 SERVICE_PROJECT = "service"
 RESOURCE_PKG = "regress_stack.resources"
@@ -84,35 +85,40 @@ def setup():
         ("cache", "expiration_time", "600"),
     )
     LOG.debug("Running keystone-manage db_sync...")
-    core_utils.sudo(
+    topology.shared_sudo(
         "keystone-manage",
         ["--config-dir", "/etc/keystone", "db_sync"],
         user="keystone",
     )
-    opts = "--keystone-user", "keystone", "--keystone-group", "keystone"
-    LOG.debug("Running bootstrapping keystone...")
-    core_utils.run("keystone-manage", ["fernet_setup", *opts])
-    core_utils.run("keystone-manage", ["credential_setup", *opts])
-    core_utils.run(
-        "keystone-manage",
-        [
-            "bootstrap",
-            "--bootstrap-password",
-            ADMIN_PASSWORD,
-            "--bootstrap-admin-url",
-            OS_AUTH_URL,
-            "--bootstrap-internal-url",
-            OS_AUTH_URL,
-            "--bootstrap-public-url",
-            OS_AUTH_URL,
-            "--bootstrap-region-id",
-            utils.REGION,
-        ],
-    )
+    if topology.owns_shared_state():
+        opts = "--keystone-user", "keystone", "--keystone-group", "keystone"
+        LOG.debug("Running bootstrapping keystone...")
+        core_utils.run("keystone-manage", ["fernet_setup", *opts])
+        core_utils.run("keystone-manage", ["credential_setup", *opts])
+        core_utils.run(
+            "keystone-manage",
+            [
+                "bootstrap",
+                "--bootstrap-password",
+                admin_password(),
+                "--bootstrap-admin-url",
+                auth_url(),
+                "--bootstrap-internal-url",
+                auth_url(),
+                "--bootstrap-public-url",
+                auth_url(),
+                "--bootstrap-region-id",
+                utils.REGION,
+            ],
+        )
     core_utils.restart_apache()
     authrc = auth_rc()
-    print(authrc)
-    pathlib.Path("~/auth.rc").expanduser().write_text(authrc)
+    if topology.explicit():
+        # Deployment credentials are generated secrets; never print them.
+        private_write(pathlib.Path("~/auth.rc").expanduser(), authrc)
+    else:
+        print(authrc)
+        pathlib.Path("~/auth.rc").expanduser().write_text(authrc)
     domain = ensure_domain(SERVICE_DOMAIN)
     ensure_project(SERVICE_PROJECT, domain.id)
     ensure_role("_member_")
@@ -121,11 +127,11 @@ def setup():
 def auth_env() -> typing.Dict[str, str]:
     return {
         "OS_USERNAME": ADMIN_USERNAME,
-        "OS_PASSWORD": ADMIN_PASSWORD,
+        "OS_PASSWORD": admin_password(),
         "OS_PROJECT_NAME": ADMIN_PROJECT,
         "OS_USER_DOMAIN_NAME": DEFAULT_DOMAIN_NAME,
         "OS_PROJECT_DOMAIN_NAME": DEFAULT_DOMAIN_NAME,
-        "OS_AUTH_URL": OS_AUTH_URL,
+        "OS_AUTH_URL": auth_url(),
         "OS_IDENTITY_API_VERSION": "3",
         "OS_REGION_NAME": utils.REGION,
     }
@@ -133,7 +139,7 @@ def auth_env() -> typing.Dict[str, str]:
 
 def account_dict(service: str, password: str) -> typing.Dict[str, str]:
     return {
-        "auth_url": OS_AUTH_URL,
+        "auth_url": auth_url(),
         "auth_type": "password",
         "project_domain_name": SERVICE_DOMAIN,
         "user_domain_name": SERVICE_DOMAIN,
@@ -147,7 +153,7 @@ def account_dict(service: str, password: str) -> typing.Dict[str, str]:
 def authtoken_service(service: str, password: str) -> typing.Dict[str, str]:
     return {
         **account_dict(service, password),
-        "www_authenticate_uri": OS_AUTH_URL,
+        "www_authenticate_uri": auth_url(),
         "service_token_roles": "admin",
         "service_token_roles_required": "true",
     }
@@ -157,11 +163,28 @@ def auth_rc():
     return "\n".join(f"export {k}={v}" for k, v in auth_env().items())
 
 
+def o7k() -> "openstack.connection.Connection":
+    env = auth_env()
+    os.environ.update(env)
+    # Key the cached connection by everything it is built from, so a
+    # different deployment context or phase never reuses it.
+    return _connect(
+        tuple(sorted(env.items())),
+        tuple(sorted(topology.setup_client_overrides().items())),
+    )
+
+
 @functools.lru_cache()
-def o7k():
-    os.environ.update(auth_env())
-    conn = openstack.connect(load_envvars=True)
-    return conn
+def _connect(
+    env: typing.Tuple[typing.Tuple[str, str], ...],
+    overrides: typing.Tuple[typing.Tuple[str, str], ...],
+):
+    # openstack.connect() reads env from os.environ; it is part of the key.
+    return openstack.connect(load_envvars=True, **dict(overrides))
+
+
+def reset_connection() -> None:
+    _connect.cache_clear()
 
 
 @functools.lru_cache()
@@ -177,6 +200,8 @@ def ensure_domain(name: str):
     if domain:
         return domain
     LOG.debug("Creating domain %r...", name)
+    if not topology.owns_shared_state():
+        raise RuntimeError("Bootstrap identity resource is missing")
     return conn.identity.create_domain(name=name)
 
 
@@ -206,6 +231,8 @@ def ensure_project(name: str, domain: str):
     if project:
         return project
     LOG.debug("Creating project %r...", name)
+    if not topology.owns_shared_state():
+        raise RuntimeError("Bootstrap identity resource is missing")
     return conn.identity.create_project(name=name, domain_id=domain)
 
 
@@ -225,10 +252,15 @@ def ensure_service_account(name: str, type: str, url: str) -> typing.Tuple[str, 
     Returns:
         Tuple of (username, password).
     """
-    password = "changeme"
+    password = topology.secret(f"keystone/{name}", "changeme")
+    if not topology.is_bootstrap_node():
+        return name, password
 
     user = ensure_user(name, password, service_domain())
     ensure_admin(user, service_project())
+    o7k().identity.assign_project_role_to_user(
+        service_project(), user, ensure_role("service").id
+    )
     service = ensure_service(name, type)
     ensure_endpoint(service, url)
     return name, password
@@ -242,6 +274,8 @@ def ensure_user(name, password, domain):
     if user:
         return user
     LOG.debug("Creating user %r...", name)
+    if not topology.owns_shared_state():
+        raise RuntimeError("Bootstrap identity resource is missing")
     return conn.identity.create_user(name=name, password=password, domain_id=domain)
 
 
@@ -258,10 +292,14 @@ def ensure_role(name: str):
     if role:
         return role
     LOG.debug("Creating role %r...", name)
+    if not topology.owns_shared_state():
+        raise RuntimeError("Bootstrap identity resource is missing")
     return conn.identity.create_role(name=name)
 
 
 def ensure_admin(user, project):
+    if not topology.owns_shared_state():
+        return
     conn = o7k()
     LOG.debug("Ensuring user %r is admin of project %r...", user.name, project)
 
@@ -275,6 +313,8 @@ def ensure_service(name: str, type: str):
     if service:
         return service
     LOG.debug("Creating service %r...", name)
+    if not topology.owns_shared_state():
+        raise RuntimeError("Bootstrap identity resource is missing")
     return conn.identity.create_service(name=name, type=type)
 
 
@@ -292,6 +332,8 @@ def _ensure_endpoint_interface(
 
 
 def ensure_endpoint(service, url: str):
+    if not topology.owns_shared_state():
+        return
     conn = o7k()
     LOG.debug("Ensuring endpoints %r exists...", service.name)
     endpoints = list(conn.identity.endpoints(service_id=service.id))
@@ -299,10 +341,12 @@ def ensure_endpoint(service, url: str):
         _ensure_endpoint_interface(conn, service, url, region(), interface, endpoints)
     # Clear connection after updating endpoints
     conn.close()
-    o7k.cache_clear()
+    reset_connection()
 
 
 def grant_domain_role(user, role, domain):
+    if not topology.owns_shared_state():
+        return
     conn = o7k()
     LOG.debug("Granting role %r to user %r...", role, user)
     try:
@@ -316,6 +360,8 @@ def grant_domain_role(user, role, domain):
 
 
 def grant_project_role(user, role, project):
+    if not topology.owns_shared_state():
+        return
     conn = o7k()
     LOG.debug("Granting role %r to user %r...", role, user)
     try:
@@ -326,3 +372,11 @@ def grant_project_role(user, role, project):
             project.assign_role_to_user(conn.identity, user, role)
         else:
             raise e
+
+
+def auth_url() -> str:
+    return topology.service_url(5000, "/v3/")
+
+
+def admin_password() -> str:
+    return topology.secret("keystone/admin", ADMIN_PASSWORD)

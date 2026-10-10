@@ -3,6 +3,7 @@
 
 import pathlib
 
+from regress_stack import topology
 from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import barbican, keystone, mysql
@@ -14,10 +15,13 @@ PACKAGES = ["glance-api"]
 LOGS = ["/var/log/glance/"]
 
 CONF = "/etc/glance/glance-api.conf"
-URL = f"http://{core_utils.my_ip()}:9292/"
 SERVICE = "glance"
 SERVICE_TYPE = "image"
 GLANCE_STRICT_IMAGE_FORMAT_VERSION = "31.0.0"
+
+
+def url() -> str:
+    return topology.service_url(9292, "/")
 
 
 def _disable_strict_image_format_validation():
@@ -36,7 +40,7 @@ def _disable_strict_image_format_validation():
 
 def setup():
     db_user, db_pass = mysql.ensure_service(SERVICE)
-    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, URL)
+    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, url())
     module_utils.cfg_set(
         CONF,
         (
@@ -50,9 +54,7 @@ def setup():
             "keystone_authtoken", keystone.authtoken_service(username, password)
         ),
         ("DEFAULT", "workers", "1"),
-        ("DEFAULT", "enabled_backends", "fs:file"),
-        ("glance_store", "default_backend", "fs"),
-        ("fs", "filesystem_store_datadir", "/var/lib/glance/images/"),
+        *_store_config(),
     )
     _disable_strict_image_format_validation()
     if barbican.installed():
@@ -63,7 +65,7 @@ def setup():
                 "key_manager", barbican.key_manager_cfg()
             ),
         )
-    core_utils.sudo("glance-manage", ["db_sync"], user=SERVICE)
+    topology.shared_sudo("glance-manage", ["db_sync"], user=SERVICE)
     core_utils.restart_service("glance-api")
 
 
@@ -76,3 +78,19 @@ def ensure_image(name: str, filepath: pathlib.Path, **kwargs):
     return conn.image.create_image(
         name=name, filename=str(filepath), wait=True, **kwargs
     )
+
+
+def _store_config():
+    if topology.images_on_ceph():
+        return [
+            ("DEFAULT", "enabled_backends", "ceph:rbd"),
+            ("glance_store", "default_backend", "ceph"),
+            ("ceph", "rbd_store_pool", "images"),
+            ("ceph", "rbd_store_user", "images"),
+            ("ceph", "rbd_store_ceph_conf", "/etc/ceph/ceph.conf"),
+        ]
+    return [
+        ("DEFAULT", "enabled_backends", "fs:file"),
+        ("glance_store", "default_backend", "fs"),
+        ("fs", "filesystem_store_datadir", "/var/lib/glance/images/"),
+    ]

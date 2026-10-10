@@ -3,6 +3,7 @@
 
 import logging
 
+from regress_stack import topology
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import keystone, mysql
 from regress_stack.modules import utils as module_utils
@@ -17,12 +18,17 @@ LOGS = [
 ]
 
 CONF = "/etc/placement/placement.conf"
-URL = f"http://{core_utils.my_ip()}:8778/"
+
+
+def url() -> str:
+    return topology.service_url(8778, "/")
 
 
 def setup():
     db_user, db_pass = mysql.ensure_service("placement")
-    username, password = keystone.ensure_service_account("placement", "placement", URL)
+    username, password = keystone.ensure_service_account(
+        "placement", "placement", url()
+    )
     core_utils.run(
         "sed",
         [
@@ -44,5 +50,5 @@ def setup():
             "keystone_authtoken", keystone.authtoken_service(username, password)
         ),
     )
-    core_utils.sudo("placement-manage", ["db", "sync"], user="placement")
+    topology.shared_sudo("placement-manage", ["db", "sync"], user="placement")
     core_utils.restart_apache()

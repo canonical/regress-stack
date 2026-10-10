@@ -4,6 +4,7 @@
 import logging
 import typing
 
+from regress_stack import topology
 from regress_stack.core import utils as core_utils
 
 LOG = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ GRANT ALL PRIVILEGES ON {name}.* TO '{database}'@'%';
 
 
 def get_host():
-    return "localhost"
+    return topology.database_host()
 
 
 def connection_string(database: str, username: str, password: str):
@@ -44,6 +45,8 @@ def ensure_service(name: str) -> typing.Tuple[str, str]:
     Returns:
         Tuple of (username, password).
     """
+    if topology.explicit():
+        return topology.database_account(name)
     password = "changeme"
 
     ensure_database(name)

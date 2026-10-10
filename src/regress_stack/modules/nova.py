@@ -9,6 +9,7 @@ import stat
 import subprocess
 import time
 
+from regress_stack import topology
 from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import (
@@ -47,7 +48,6 @@ BASE_PACKAGES = [
 LOG = logging.getLogger(__name__)
 
 CONF = "/etc/nova/nova.conf"
-URL = f"http://{core_utils.my_ip()}:8774/v2.1"
 NOVA_CEPH_UUID = pathlib.Path("/etc/nova/ceph_uuid")
 SERVICE = "nova"
 SERVICE_TYPE = "compute"
@@ -66,30 +66,59 @@ NOVA_PRIVSEP_HELPER = (
 )
 
 
+def url() -> str:
+    return topology.service_url(8774, "/v2.1")
+
+
 def determine_packages(no_tempest: bool = False) -> list[str]:
-    return list(BASE_PACKAGES)
+    return [*BASE_PACKAGES, *spice_packages()]
+
+
+def compute_packages(no_tempest: bool = False) -> list[str]:
+    """Packages for a node that only runs nova-compute."""
+    return ["nova-compute", *spice_packages()]
+
+
+def spice_packages() -> list[str]:
+    # QEMU 8.1 moved SPICE support out of qemu-system-common into a module.
+    if (
+        core_apt.PkgVersionCompare("qemu-system-common", candidate=True, upstream=True)
+        >= "8.1.0"
+    ):
+        return ["qemu-system-modules-spice"]
+    return ["qemu-system-common"]
 
 
 def setup():
-    db_user, db_pass = mysql.ensure_service(SERVICE)
-    db_api_user, db_api_pass = mysql.ensure_service("nova_api")
-    db_cell0_user, db_cell0_pass = mysql.ensure_service("nova_cell0")
+    controller = topology.is_controller()
+    runs_compute = topology.runs_compute()
+    database_settings = []
+    if controller:
+        db_user, db_pass = mysql.ensure_service(SERVICE)
+        db_api_user, db_api_pass = mysql.ensure_service("nova_api")
+        db_cell0_user, db_cell0_pass = mysql.ensure_service("nova_cell0")
+        database_settings = [
+            (
+                "database",
+                "connection",
+                mysql.connection_string(SERVICE, db_user, db_pass),
+            ),
+            ("database", "max_pool_size", "1"),
+            (
+                "api_database",
+                "connection",
+                mysql.connection_string("nova_api", db_api_user, db_api_pass),
+            ),
+            ("api_database", "max_pool_size", "1"),
+        ]
     rabbit_user, rabbit_pass = rabbitmq.ensure_service(SERVICE)
-    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, URL)
+    username, password = keystone.ensure_service_account(SERVICE, SERVICE_TYPE, url())
+    libvirt_settings = []
+    if runs_compute:
+        libvirt_settings = [("libvirt", "virt_type", virt_type())]
     module_utils.cfg_set(
         CONF,
-        (
-            "database",
-            "connection",
-            mysql.connection_string(SERVICE, db_user, db_pass),
-        ),
-        ("database", "max_pool_size", "1"),
-        (
-            "api_database",
-            "connection",
-            mysql.connection_string("nova_api", db_api_user, db_api_pass),
-        ),
-        ("api_database", "max_pool_size", "1"),
+        *database_settings,
         ("DEFAULT", "transport_url", rabbitmq.transport_url(rabbit_user, rabbit_pass)),
         ("DEFAULT", "host", core_utils.fqdn()),
         ("DEFAULT", "my_ip", core_utils.my_ip()),
@@ -108,7 +137,7 @@ def setup():
             "neutron", keystone.account_dict(username, password)
         ),
         ("neutron", "service_metadata_proxy", "true"),
-        ("neutron", "metadata_proxy_shared_secret", neutron.METADATA_SECRET),
+        ("neutron", "metadata_proxy_shared_secret", neutron.metadata_secret()),
         *module_utils.dict_to_cfg_set_args(
             "service_user", keystone.account_dict(username, password)
         ),
@@ -127,25 +156,20 @@ def setup():
         *module_utils.dict_to_cfg_set_args(
             "spice",
             {
-                "enabled": "true",
+                "enabled": str(topology.spice_console_enabled()).lower(),
                 "agent_enabled": "true",
-                "html5proxy_base_url": f"http://{core_utils.my_ip()}:6082/spice_auto.html",
+                "html5proxy_base_url": topology.service_url(6082, "/spice_auto.html"),
                 "server_listen": core_utils.my_ip(),
                 "server_proxyclient_address": core_utils.my_ip(),
                 "keymap": "en-us",
             },
         ),
-        *module_utils.dict_to_cfg_set_args(
-            "libvirt",
-            {
-                "virt_type": virt_type(),
-            },
-        ),
-        ("os_vif_ovs", "ovsdb_connection", ovn.OVSDB_CONNECTION),
+        *libvirt_settings,
+        ("os_vif_ovs", "ovsdb_connection", topology.ovsdb_connection()),
     )
     _ensure_questing_compat()
 
-    if ceph.installed() and cinder.installed():
+    if runs_compute and ceph.installed() and cinder.installed():
         pool = ceph.ensure_pool(cinder.VOLUME_POOL)
         module_utils.cfg_set(
             CONF,
@@ -178,25 +202,34 @@ def setup():
             ),
         )
 
-    core_utils.sudo("nova-manage", ["api_db", "sync"], user="nova")
-    core_utils.sudo(
-        "nova-manage",
-        [
-            "cell_v2",
-            "map_cell0",
-            "--database_connection",
-            mysql.connection_string("nova_cell0", db_cell0_user, db_cell0_pass),
-        ],
-        user="nova",
-    )
-    list_cells = core_utils.sudo("nova-manage", ["cell_v2", "list_cells"], user="nova")
-    if " cell1 " not in list_cells:
+    if topology.owns_shared_state():
+        core_utils.sudo("nova-manage", ["api_db", "sync"], user="nova")
         core_utils.sudo(
-            "nova-manage", ["cell_v2", "create_cell", "--name=cell1"], user="nova"
+            "nova-manage",
+            [
+                "cell_v2",
+                "map_cell0",
+                "--database_connection",
+                mysql.connection_string("nova_cell0", db_cell0_user, db_cell0_pass),
+            ],
+            user="nova",
         )
-    core_utils.sudo("nova-manage", ["db", "sync"], user="nova")
+        list_cells = core_utils.sudo(
+            "nova-manage", ["cell_v2", "list_cells"], user="nova"
+        )
+        if " cell1 " not in list_cells:
+            core_utils.sudo(
+                "nova-manage", ["cell_v2", "create_cell", "--name=cell1"], user="nova"
+            )
+        core_utils.sudo("nova-manage", ["db", "sync"], user="nova")
 
-    nova_daemons = ["nova-api", "nova-scheduler", "nova-conductor", "nova-compute"]
+    if not controller:
+        core_utils.restart_service("nova-compute")
+        return
+
+    nova_daemons = ["nova-api", "nova-scheduler", "nova-conductor"]
+    if runs_compute:
+        nova_daemons.append("nova-compute")
 
     if _api_runs_under_apache():
         nova_daemons.remove("nova-api")
@@ -205,6 +238,10 @@ def setup():
 
     for _daemon in nova_daemons:
         core_utils.restart_service(_daemon)
+
+    if topology.explicit():
+        # Explicit deployments discover hosts periodically from the scheduler.
+        return
 
     # Give some time for nova-compute to be up before discovering hosts
     for _ in range(25):
@@ -234,7 +271,7 @@ def _ensure_questing_compat() -> None:
             ("nova_sys_admin", "helper_command", NOVA_PRIVSEP_HELPER),
             ("vif_plug_ovs_privileged", "helper_command", NOVA_PRIVSEP_HELPER),
         )
-    if _api_runs_under_apache():
+    if topology.is_controller() and _api_runs_under_apache():
         _ensure_metadata_site()
 
 
