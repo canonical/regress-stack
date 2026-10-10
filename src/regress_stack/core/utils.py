@@ -19,6 +19,8 @@ import typing
 
 import pyroute2
 
+from regress_stack.core import deployment, quiet, results
+
 LOG = logging.getLogger(__name__)
 
 REGRESS_STACK_DIR = pathlib.Path("/var/lib/regress-stack/")
@@ -69,6 +71,9 @@ def run(
     env: typing.Optional[typing.Dict[str, str]] = None,
     cwd: typing.Optional[str] = None,
 ) -> str:
+    if deployment.current() is not None:
+        # Legacy commands (migrations, image downloads) have never been bounded.
+        return quiet.run(cmd, args, env=env, cwd=cwd, timeout=None)
     cmd_args = [cmd]
     cmd_args.extend(args)
     try:
@@ -101,6 +106,11 @@ def system(
     env: typing.Optional[typing.Dict[str, str]] = None,
     cwd: typing.Optional[str] = None,
 ) -> int:
+    context = deployment.current()
+    if context is not None:
+        return results.run(
+            "sh", ["-c", cmd], env=env, cwd=cwd, secrets=tuple(context.values.values())
+        )
     exit_code = -1
     saved_env = os.environ
     saved_cwd = os.getcwd()
@@ -151,8 +161,13 @@ def mask_server(service: str):
     run("systemctl", ["mask", service])
 
 
-@functools.lru_cache()
 def fqdn() -> str:
+    context = deployment.current()
+    return context.local.name if context else _fqdn()
+
+
+@functools.lru_cache()
+def _fqdn() -> str:
     return run("hostname", ["-f"]).strip()
 
 
@@ -166,8 +181,13 @@ def _get_local_ip_by_default_route() -> typing.Tuple[str, int]:
         return ipaddr["address"], ipaddr["prefixlen"]
 
 
-@functools.lru_cache()
 def my_ip() -> str:
+    context = deployment.current()
+    return context.local.address if context else _my_ip()
+
+
+@functools.lru_cache()
+def _my_ip() -> str:
     try:
         return _get_local_ip_by_default_route()[0]
     except Exception:

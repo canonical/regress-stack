@@ -20,6 +20,7 @@ def mock_apt(monkeypatch):
     apt = Mock(Cache=Mock(return_value=cache))
 
     monkeypatch.setattr("regress_stack.core.apt.apt", apt)
+    monkeypatch.setattr("regress_stack.core.apt.APT_CACHE", None)
     yield apt
 
 
