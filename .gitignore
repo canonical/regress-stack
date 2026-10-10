@@ -12,3 +12,10 @@ spread.yaml
 
 # Virtual environments
 .venv
+
+# Multinode Terraform working files (the provider lock file is committed)
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars.json
+multinode-artifacts/
