@@ -6,6 +6,7 @@ import typing
 
 from regress_stack import topology
 from regress_stack.core import utils as core_utils
+from regress_stack.roles import Role
 
 LOG = logging.getLogger(__name__)
 
@@ -88,3 +89,8 @@ def grant_user(name, database):
     core_utils.run(
         "mysql", ["-u", "root", "-e", GRANT_USER.format(name=name, database=database)]
     )
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(("utils",), configured_by="recipe"),
+}

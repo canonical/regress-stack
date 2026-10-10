@@ -11,6 +11,7 @@ import pyroute2
 
 from regress_stack import topology
 from regress_stack.core import utils as core_utils
+from regress_stack.roles import Role
 
 LOG = logging.getLogger(__name__)
 
@@ -177,3 +178,14 @@ def nb_connection() -> str:
 
 def sb_connection() -> str:
     return topology.ovn_database(6642)
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(("utils",), configured_by="recipe"),
+    "compute": Role(
+        ("utils",),
+        shared_dependencies=("ovn",),
+        packages=("openvswitch-switch", "ovn-host"),
+        configured_by="recipe",
+    ),
+}

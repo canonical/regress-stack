@@ -11,6 +11,7 @@ from pathlib import Path
 from regress_stack import topology
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import utils as module_utils
+from regress_stack.roles import Role
 
 LOG = logging.getLogger(__name__)
 
@@ -393,3 +394,14 @@ def _local_rbd_uuid() -> str:
     uuid_str = str(uuid.uuid4())
     RBD_UUID.write_text(uuid_str)
     return uuid_str
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(("utils",), configured_by="recipe"),
+    "compute": Role(
+        ("utils",),
+        shared_dependencies=("ceph",),
+        packages=("ceph-common",),
+        configured_by="recipe",
+    ),
+}

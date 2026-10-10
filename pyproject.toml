@@ -45,6 +45,7 @@ files = [
     "src/regress_stack/core/results.py",
     "src/regress_stack/multinode",
     "src/regress_stack/topology.py",
+    "src/regress_stack/roles.py",
 ]
 python_version = "3.10"
 strict = true

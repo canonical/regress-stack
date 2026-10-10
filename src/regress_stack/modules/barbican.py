@@ -12,6 +12,7 @@ from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import keystone, mysql, rabbitmq
 from regress_stack.modules import utils as module_utils
+from regress_stack.roles import Role
 
 LOG = logging.getLogger(__name__)
 
@@ -281,3 +282,8 @@ def _write_sitecustomize(workspace: pathlib.Path):
         "tempest_config.CONF.register_opt(\n"
         "    cfg.StrOpt('img_dir', default=''), group='scenario')\n"
     )
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(("keystone", "mysql", "rabbitmq")),
+}

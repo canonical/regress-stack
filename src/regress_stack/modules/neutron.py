@@ -9,9 +9,11 @@ import time
 
 from regress_stack import topology
 from regress_stack.core import apt as core_apt
+from regress_stack.core import quiet as core_quiet
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import keystone, mysql, ovn, rabbitmq
 from regress_stack.modules import utils as module_utils
+from regress_stack.roles import Role
 
 LOG = logging.getLogger(__name__)
 
@@ -292,3 +294,32 @@ def ensure_subnet_router(subnet, router):
 
 def metadata_secret() -> str:
     return topology.secret("neutron/metadata", METADATA_SECRET)
+
+
+def setup_metadata_agent() -> None:
+    """Configure only the metadata agent for an explicit deployment."""
+    module_utils.cfg_set(
+        METADATA_AGENT_CONF,
+        ("DEFAULT", "nova_metadata_host", topology.metadata_host()),
+        ("DEFAULT", "nova_metadata_port", str(topology.metadata_port())),
+        (
+            "DEFAULT",
+            "metadata_proxy_shared_secret",
+            topology.deployment_secret("neutron/metadata"),
+        ),
+        ("ovs", "ovsdb_connection", topology.ovsdb_connection()),
+        ("ovn", "ovn_sb_connection", ovn.sb_connection()),
+    )
+    core_quiet.run("systemctl", ["enable", "neutron-ovn-metadata-agent"])
+    core_quiet.run("systemctl", ["restart", "neutron-ovn-metadata-agent"])
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(("keystone", "mysql", "rabbitmq", "ovn")),
+    "compute": Role(
+        ("ovn",),
+        shared_dependencies=("neutron", "nova"),
+        packages=("neutron-ovn-metadata-agent",),
+        setup=setup_metadata_agent,
+    ),
+}
