@@ -1,6 +1,7 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+import json
 import dataclasses
 from unittest.mock import Mock
 
@@ -10,9 +11,11 @@ from regress_stack.core.deployment import activate
 from regress_stack.multinode import (
     access,
     common,
+    coordination,
     database,
     messaging,
     networking,
+    preseed,
     storage,
 )
 from regress_stack import topology
@@ -144,6 +147,70 @@ def test_storage_replicates_across_hosts(context):
     assert "osd crush chooseleaf type = 1" in config
 
 
+def test_export_excludes_server_credentials_from_compute(context, tmp_path):
+    context.export(tmp_path / "seeds", preseed.contributions(context))
+    values = json.loads((tmp_path / "seeds/compute1.json").read_text())["values"]
+    assert set(values) == {
+        "rabbitmq/nova",
+        "keystone/nova",
+        "ceph/fsid",
+        "ceph/rbd_uuid",
+        "ceph/client.volumes",
+        "neutron/metadata",
+        "cinder/service-type",
+    }
+    peer_values = json.loads((tmp_path / "seeds/node2.json").read_text())["values"]
+    assert "ceph/mgr.node2" in peer_values
+    assert "ceph/mgr.node3" not in peer_values
+
+
+def test_storage_free_control_preseed_and_nova_config(context, monkeypatch):
+    from regress_stack.modules import ceph, cinder, glance
+    from regress_stack.multinode import services
+
+    control = dataclasses.replace(
+        context,
+        values={},
+        deployment=dataclasses.replace(
+            context.deployment,
+            profile="control",
+            disabled_modules=(
+                "ceph",
+                "cinder",
+                "barbican",
+                "heat",
+                "magnum",
+                "watcher",
+            ),
+        ),
+    )
+    monkeypatch.setattr(coordination, "implementation", lambda: "valkey")
+    monkeypatch.setattr(coordination, "sentinel_auth_supported", lambda: True)
+    forbidden = Mock(side_effect=AssertionError("Ceph must not be used"))
+    monkeypatch.setattr(common, "run", forbidden)
+    control = dataclasses.replace(control, values=preseed.generate(control))
+    assert not any(key.startswith(("ceph/", "cinder/")) for key in control.values)
+    assert not any(
+        key.startswith(("ceph/", "cinder/")) for key in preseed.contributions(control)
+    )
+
+    with activate(control):
+        assert not ceph.installed()
+        assert not cinder.installed()
+        assert ("glance_store", "default_backend", "fs") in glance._store_config()
+
+    compute = dataclasses.replace(control, local_name="compute1")
+    settings = []
+    monkeypatch.setattr(
+        services.utils, "cfg_set", lambda path, *args: settings.extend(args)
+    )
+    monkeypatch.setattr(common, "run", Mock())
+    with activate(compute):
+        services.prepare("nova")
+    assert not any(key.startswith(("images_rbd", "rbd_")) for _, key, _ in settings)
+    assert ("scheduler", "discover_hosts_in_cells_interval", "10") in settings
+
+
 def test_compute_setup_uses_client_credentials_and_only_starts_compute(
     compute, monkeypatch
 ):
@@ -177,6 +244,18 @@ def test_compute_setup_uses_client_credentials_and_only_starts_compute(
     ) in calls
 
 
+def test_generated_recovery_password_fits_mysql_channel(context, monkeypatch):
+    monkeypatch.setattr(coordination, "implementation", lambda: "valkey")
+    monkeypatch.setattr(coordination, "sentinel_auth_supported", lambda: True)
+    monkeypatch.setattr(common, "run", lambda *args, **kwargs: "ceph-key")
+    from regress_stack.modules import cinder
+
+    monkeypatch.setattr(cinder, "get_service_type", lambda: "volumev3")
+    password = preseed.generate(context)["mysql/recovery"]
+    assert len(password) == 32
+    assert common.token(password) == password
+
+
 def test_external_check_is_scoped_to_mysql(context):
     config = access.configuration(context)
     defaults, backends = config.split("listen mysql", 1)
@@ -184,6 +263,22 @@ def test_external_check_is_scoped_to_mysql(context):
     assert "option external-check" not in defaults
     assert "option external-check" in mysql_backend
     assert "option external-check" not in api_backends
+
+
+def test_stop_unconfigured_services_preserves_completed_modules(monkeypatch):
+    from regress_stack.multinode import services
+
+    run = Mock(
+        return_value=(
+            "nova-compute.service enabled enabled\n"
+            "cinder-volume.service enabled enabled\n"
+            "rabbitmq-server.service enabled enabled\n"
+        )
+    )
+    monkeypatch.setattr(common, "run", run)
+    monkeypatch.setattr(common, "done", lambda name: name == "service-cinder")
+    services.stop_unconfigured()
+    assert run.call_args.args == ("systemctl", ["stop", "nova-compute.service"])
 
 
 def test_haproxy_helper_directory_is_traversable(context, tmp_path, monkeypatch):
@@ -247,6 +342,20 @@ def test_ovn_hostname_matches_inventory(context, monkeypatch):
     )
     assert f"external_ids:hostname={context.local.name}" in settings
     assert f"external_ids:system-id={context.local.name}" in settings
+
+
+def test_caracal_nova_uses_privileged_ovs_driver(context, monkeypatch):
+    from regress_stack.multinode import services
+
+    configure = Mock()
+    run = Mock()
+    monkeypatch.setattr(common, "run", run)
+    monkeypatch.setattr(services.utils, "cfg_set", configure)
+    with activate(context):
+        services.prepare("nova")
+    run.assert_called_once_with("systemctl", ["start", "libvirtd"])
+    options = [option for call in configure.call_args_list for option in call.args[1:]]
+    assert ("os_vif_ovs", "ovsdb_interface", "vsctl") in options
 
 
 def test_database_proxy_timeout_exceeds_pool_recycle(context):
@@ -332,6 +441,61 @@ def test_nova_metadata_compat_respects_local_role(
         metadata.assert_not_called()
 
 
+@pytest.mark.parametrize("supported", [False, True])
+def test_preseed_freezes_sentinel_auth(context, monkeypatch, supported):
+    from regress_stack.multinode import preseed
+    from regress_stack.modules import cinder
+
+    monkeypatch.setattr(coordination, "implementation", lambda: "redis")
+    monkeypatch.setattr(coordination, "sentinel_auth_supported", lambda: supported)
+    monkeypatch.setattr(coordination.common, "run", lambda *args, **kwargs: "ceph-key")
+    monkeypatch.setattr(cinder, "get_service_type", lambda: "volumev3")
+    values = preseed.generate(context)
+    password = values["coordination/password"]
+    assert password
+    assert values["coordination/sentinel-password"] == (password if supported else "")
+
+
+def test_wsgi_worker_limit_preserves_other_daemons(tmp_path, monkeypatch):
+    from regress_stack.multinode import services
+
+    config = tmp_path / "nova-api.conf"
+    config.write_text(
+        "WSGIDaemonProcess nova-api processes=5 threads=1 user=nova\n"
+        " WSGIDaemonProcess nova-metadata user=nova processes=5 threads=1\n"
+        "WSGIDaemonProcess neutron-api processes=4 threads=1\n"
+        "# WSGIDaemonProcess nova-api processes=5 threads=1\n"
+    )
+    monkeypatch.setattr(services, "APACHE_CONFIG_DIRS", (tmp_path,))
+    services.limit_wsgi_workers("nova")
+    assert config.read_text() == (
+        "WSGIDaemonProcess nova-api processes=1 threads=1 user=nova\n"
+        " WSGIDaemonProcess nova-metadata user=nova processes=1 threads=1\n"
+        "WSGIDaemonProcess neutron-api processes=4 threads=1\n"
+        "# WSGIDaemonProcess nova-api processes=5 threads=1\n"
+    )
+
+
+def test_controller_preparation_limits_wsgi_workers(context, monkeypatch):
+    from regress_stack.multinode import services
+
+    limit = Mock()
+    monkeypatch.setattr(services, "limit_wsgi_workers", limit)
+    with activate(context):
+        services.prepare("placement")
+    limit.assert_called_once_with("placement")
+
+
+def test_compute_preparation_does_not_edit_apache(compute, monkeypatch):
+    from regress_stack.multinode import services
+
+    limit = Mock()
+    monkeypatch.setattr(services, "limit_wsgi_workers", limit)
+    with activate(compute):
+        services.prepare("placement")
+    limit.assert_not_called()
+
+
 def test_new_osd_has_capacity_for_multinode_images(tmp_path, monkeypatch):
     from regress_stack.multinode import storage
 
@@ -357,6 +521,36 @@ def test_new_osd_has_capacity_for_multinode_images(tmp_path, monkeypatch):
         "fallocate",
         ["--length", "10G", str(tmp_path / "osd" / "backing.img")],
     ) in calls
+
+
+@pytest.mark.parametrize("role", ["context", "compute"])
+def test_nova_preparation_starts_libvirt_before_secret_definition(
+    role, request, monkeypatch
+):
+    from regress_stack.multinode import services
+
+    run = Mock()
+    monkeypatch.setattr(common, "run", run)
+    monkeypatch.setattr(services.utils, "cfg_set", Mock())
+    with activate(request.getfixturevalue(role)):
+        services.prepare("nova")
+    run.assert_any_call("systemctl", ["start", "libvirtd"])
+
+
+def test_control_preparation_does_not_start_libvirt(context, monkeypatch):
+    from regress_stack.multinode import services
+
+    control = dataclasses.replace(
+        context, deployment=dataclasses.replace(context.deployment, profile="control")
+    )
+    run = Mock()
+    monkeypatch.setattr(common, "run", run)
+    monkeypatch.setattr(services.utils, "cfg_set", Mock())
+    with activate(control):
+        services.prepare("nova")
+    assert ("systemctl", ["start", "libvirtd"]) not in [
+        call.args for call in run.call_args_list
+    ]
 
 
 def test_control_nova_starts_api_services_without_compute(context, monkeypatch):
@@ -421,6 +615,22 @@ def test_control_neutron_centralizes_floating_ips(context, monkeypatch):
 
 def test_database_capacity_covers_three_controller_clients(context):
     assert "max_connections=500\n" in database.configuration(context)
+
+
+def test_keystone_preparation_starts_cache(context, monkeypatch, tmp_path):
+    from regress_stack.multinode import services
+
+    for folder in ("fernet-keys", "credential-keys"):
+        for number in ("0", "1"):
+            context.values[f"keystone/{folder}/{number}"] = "test-key"
+    run = Mock()
+    monkeypatch.setattr(common, "run", run)
+    monkeypatch.setattr(common, "write", Mock())
+    monkeypatch.setattr(services, "Path", lambda _: tmp_path)
+    monkeypatch.setattr(services.shutil, "chown", Mock())
+    with activate(context):
+        services.prepare("keystone")
+    run.assert_any_call("systemctl", ["start", "memcached"])
 
 
 def test_wait_for_retries_failed_private_commands(monkeypatch):
