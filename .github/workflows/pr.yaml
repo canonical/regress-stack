@@ -28,8 +28,14 @@ jobs:
         sudo apt update
         sudo apt install --yes dpkg-dev libapt-pkg-dev
 
+    - name: Check types
+      run: uv run mypy
+
     - name: Run unit-tests
       run: uv run py.test
 
   functional-tests:
     uses: ./.github/workflows/functional-tests.yaml
+
+  multinode-tests:
+    uses: ./.github/workflows/multinode-tests.yaml
