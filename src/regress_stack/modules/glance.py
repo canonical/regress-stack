@@ -8,6 +8,7 @@ from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import barbican, keystone, mysql
 from regress_stack.modules import utils as module_utils
+from regress_stack.roles import Role
 
 DEPENDENCIES = {keystone, mysql}
 OPTIONAL_DEPENDENCIES = {barbican}
@@ -94,3 +95,8 @@ def _store_config():
         ("glance_store", "default_backend", "fs"),
         ("fs", "filesystem_store_datadir", "/var/lib/glance/images/"),
     ]
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(("keystone", "mysql"), ("ceph", "barbican")),
+}

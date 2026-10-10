@@ -14,6 +14,7 @@ from regress_stack.core import utils as core_utils
 from regress_stack.core.deployment import private_write
 from regress_stack.modules import mysql, utils
 from regress_stack.modules import utils as module_utils
+from regress_stack.roles import Role
 
 LOG = logging.getLogger(__name__)
 
@@ -380,3 +381,8 @@ def auth_url() -> str:
 
 def admin_password() -> str:
     return topology.secret("keystone/admin", ADMIN_PASSWORD)
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(("mysql",)),
+}

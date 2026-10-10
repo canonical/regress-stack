@@ -185,3 +185,18 @@ def node_name() -> str | None:
 def provider_network() -> ProviderNetwork | None:
     ctx = context()
     return ctx.deployment.provider if ctx else None
+
+
+def metadata_host() -> str:
+    """The API address shared by Nova metadata backends."""
+    ctx = context()
+    if ctx is None:
+        raise RuntimeError("Metadata routing requires an explicit deployment")
+    return ctx.deployment.api_address
+
+
+def metadata_port() -> int:
+    ctx = context()
+    if ctx is None:
+        raise RuntimeError("Metadata routing requires an explicit deployment")
+    return ctx.deployment.api_port(8775)

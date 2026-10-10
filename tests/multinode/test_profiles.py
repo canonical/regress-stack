@@ -24,7 +24,7 @@ def deployment():
 
 
 def test_compute_has_only_local_client_packages(deployment):
-    from regress_stack.modules import nova
+    from regress_stack.modules import nova, neutron
 
     context = Context(deployment, "compute1", str(uuid.uuid4()))
     packages = profiles.packages(context)
@@ -46,11 +46,11 @@ def test_compute_has_only_local_client_packages(deployment):
         module.name for module in modules
     ].index("nova")
     nova = next(module for module in modules if module.name == "nova")
-    assert "rabbitmq" in nova.shared_dependencies
-    assert "rabbitmq" not in nova.local_dependencies
-    assert nova.configure is not None
-    neutron = next(module for module in modules if module.name == "neutron")
-    assert neutron.configure is profiles.services.configure_metadata_agent
+    assert "rabbitmq" in nova.role.shared_dependencies
+    assert "rabbitmq" not in nova.role.requires + nova.role.after
+    assert nova.role.configured_by == "module"
+    neutron_role = next(module for module in modules if module.name == "neutron")
+    assert neutron_role.role.setup is neutron.setup_metadata_agent
 
 
 def test_explicit_profile_fails_on_missing_local_package(deployment, monkeypatch):
@@ -244,3 +244,58 @@ def test_execution_order_is_unchanged_for_full_controllers(deployment):
         "magnum",
         "watcher",
     ]
+
+
+@pytest.mark.parametrize("no_tempest", [False, True])
+def test_role_packages_use_explicit_context(deployment, monkeypatch, no_tempest):
+    import dataclasses
+
+    from regress_stack.core.deployment import activate
+    from regress_stack.modules import nova
+
+    control = dataclasses.replace(deployment, profile="control")
+    requested = Context(control, "node1", "00000000-0000-0000-0000-000000000001")
+    ambient = Context(deployment, "node1", "00000000-0000-0000-0000-000000000001")
+
+    def callback(no_tempest):
+        return ["without-tempest" if no_tempest else "with-tempest"]
+
+    monkeypatch.setattr(nova, "determine_packages", callback)
+    monkeypatch.setattr(nova, "compute_packages", callback)
+    controller = next(m for m in profiles.local_modules(requested) if m.name == "nova")
+    assert controller.packages(requested, no_tempest) == list(
+        nova.NOVA_CONTROL_PACKAGES
+    )
+    with activate(ambient):
+        assert controller.packages(requested, no_tempest) == list(
+            nova.NOVA_CONTROL_PACKAGES
+        )
+    with activate(requested):
+        assert controller.packages(ambient, no_tempest) == callback(no_tempest)
+        compute = Context(control, "compute1", "00000000-0000-0000-0000-000000000001")
+        module = next(m for m in profiles.local_modules(compute) if m.name == "nova")
+        assert module.packages(compute, no_tempest) == callback(no_tempest)
+
+
+@pytest.mark.parametrize("name", ["node1", "compute1"])
+def test_recipe_roles_have_no_module_setup(deployment, name):
+    context = Context(deployment, name, "00000000-0000-0000-0000-000000000001")
+    modules = profiles.local_modules(context)
+    expected = {"utils", "ceph", "ovn"}
+    if context.is_controller:
+        expected |= {"mysql", "rabbitmq"}
+    recipes = {m.name for m in modules if m.role.configured_by == "recipe"}
+    assert recipes == expected
+    assert all(m.role.setup is None for m in modules if m.name in recipes)
+
+
+def test_empty_role_package_override_does_not_use_module_defaults(deployment):
+    from regress_stack.roles import Role
+
+    module = profiles.LocalModule("utils", Role(packages=()))
+    assert (
+        module.packages(
+            Context(deployment, "node1", "00000000-0000-0000-0000-000000000001")
+        )
+        == []
+    )

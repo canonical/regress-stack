@@ -17,6 +17,7 @@ from regress_stack.modules import (
     rabbitmq,
 )
 from regress_stack.modules import utils as module_utils
+from regress_stack.roles import Role
 
 DEPENDENCIES = {keystone, mysql, rabbitmq, nova, neutron, heat, cinder, glance}
 CONDUCTOR = "magnum-conductor"
@@ -248,3 +249,8 @@ def configure_tempest(tempest_conf: pathlib.Path):
             },
         ),
     )
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(("heat", "cinder", "glance", "nova")),
+}

@@ -7,6 +7,7 @@ from regress_stack import topology
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import keystone, mysql
 from regress_stack.modules import utils as module_utils
+from regress_stack.roles import Role
 
 LOG = logging.getLogger(__name__)
 
@@ -52,3 +53,8 @@ def setup():
     )
     topology.shared_sudo("placement-manage", ["db", "sync"], user="placement")
     core_utils.restart_apache()
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(("keystone", "mysql")),
+}

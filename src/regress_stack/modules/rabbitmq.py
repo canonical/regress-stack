@@ -6,6 +6,7 @@ import logging
 
 from regress_stack import topology
 from regress_stack.core import utils as core_utils
+from regress_stack.roles import Role
 
 LOG = logging.getLogger(__name__)
 
@@ -59,3 +60,8 @@ def ensure_permissions(user: str, vhost: str):
     core_utils.run(
         "rabbitmqctl", ["set_permissions", "--vhost", vhost, user, ".*", ".*", ".*"]
     )
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(("utils",), configured_by="recipe"),
+}

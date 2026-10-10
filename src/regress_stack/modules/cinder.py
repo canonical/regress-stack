@@ -8,6 +8,7 @@ from regress_stack import topology
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import barbican, ceph, keystone, mysql, rabbitmq
 from regress_stack.modules import utils as module_utils
+from regress_stack.roles import Role
 
 DEPENDENCIES = {ceph, keystone, mysql, rabbitmq}
 OPTIONAL_DEPENDENCIES = {barbican}
@@ -185,3 +186,8 @@ def configure_tempest(tempest_conf: pathlib.Path):
         if version is not None:
             options.append(("volume", name, ".".join(map(str, version))))
     module_utils.cfg_set(str(tempest_conf), *options)
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(("keystone", "mysql", "rabbitmq", "ceph"), ("barbican",)),
+}

@@ -5,6 +5,7 @@ import logging
 import typing
 
 from regress_stack.core import utils as core_utils
+from regress_stack.roles import Role
 
 LOG = logging.getLogger(__name__)
 
@@ -33,3 +34,9 @@ def dict_to_cfg_set_args(
 
 def cfg_get(config_file: str, section: str, key: str) -> str:
     return core_utils.run("crudini", ["--get", config_file, section, key])
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(configured_by="recipe"),
+    "compute": Role(configured_by="recipe"),
+}

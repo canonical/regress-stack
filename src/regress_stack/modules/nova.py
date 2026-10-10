@@ -12,6 +12,7 @@ import time
 from regress_stack import topology
 from regress_stack.core import apt as core_apt
 from regress_stack.core import utils as core_utils
+from regress_stack.core.deployment import Context, Profile
 from regress_stack.modules import (
     barbican,
     ceph,
@@ -26,6 +27,7 @@ from regress_stack.modules import (
     utils,
 )
 from regress_stack.modules import utils as module_utils
+from regress_stack.roles import Role
 
 DEPENDENCIES = {
     glance,
@@ -45,6 +47,14 @@ BASE_PACKAGES = [
     "nova-spiceproxy",
     "spice-html5",
 ]
+NOVA_CONTROL_PACKAGES = (
+    "nova-api",
+    "nova-conductor",
+    "nova-scheduler",
+    "nova-spiceproxy",
+    "spice-html5",
+)
+
 LOG = logging.getLogger(__name__)
 
 CONF = "/etc/nova/nova.conf"
@@ -77,6 +87,17 @@ def determine_packages(no_tempest: bool = False) -> list[str]:
 def compute_packages(no_tempest: bool = False) -> list[str]:
     """Packages for a node that only runs nova-compute."""
     return ["nova-compute", *spice_packages()]
+
+
+def controller_role_packages(context: Context, no_tempest: bool) -> list[str]:
+    """Select controller packages without requiring an activated context."""
+    if context.deployment.profile is Profile.CONTROL:
+        return list(NOVA_CONTROL_PACKAGES)
+    return determine_packages(no_tempest=no_tempest)
+
+
+def compute_role_packages(context: Context, no_tempest: bool) -> list[str]:
+    return compute_packages(no_tempest=no_tempest)
 
 
 def spice_packages() -> list[str]:
@@ -477,3 +498,18 @@ def ensure_flavor(name: str, ram: int, vcpus: int, disk: int):
     if flavor:
         return flavor
     return conn.compute.create_flavor(name=name, vcpus=vcpus, ram=ram, disk=disk)
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(
+        ("glance", "placement", "neutron"),
+        ("cinder",),
+        packages=controller_role_packages,
+    ),
+    "compute": Role(
+        ("neutron",),
+        ("ceph",),
+        shared_dependencies=("keystone", "rabbitmq", "placement", "glance", "cinder"),
+        packages=compute_role_packages,
+    ),
+}

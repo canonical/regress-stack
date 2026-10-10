@@ -7,6 +7,7 @@ from regress_stack import topology
 from regress_stack.core import utils as core_utils
 from regress_stack.modules import keystone, mysql, nova, rabbitmq
 from regress_stack.modules import utils as module_utils
+from regress_stack.roles import Role
 
 DEPENDENCIES = {keystone, mysql, nova, rabbitmq}
 BASE_PACKAGES = [
@@ -78,3 +79,8 @@ def configure_tempest(tempest_conf: pathlib.Path):
         str(tempest_conf),
         ("service_available", "watcher", "True"),
     )
+
+
+EXPLICIT_ROLES: dict[str, Role] = {
+    "controller": Role(("nova", "mysql", "rabbitmq")),
+}

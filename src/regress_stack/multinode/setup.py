@@ -181,9 +181,14 @@ def run(
                 storage.setup()
             networking.setup()
             for module in profiles.local_modules(context):
-                if module.configure is None or common.done(f"service-{module.name}"):
+                if module.role.configured_by == "recipe" or common.done(
+                    f"service-{module.name}"
+                ):
                     continue
-                module.configure(module.name)
+                if module.role.setup is not None:
+                    module.role.setup()
+                else:
+                    services.configure(module.name)
                 common.mark(f"service-{module.name}")
                 utils.mark_setup(f"regress_stack.modules.{module.name}")
             # Export only after all deployment resources and shared keys exist.

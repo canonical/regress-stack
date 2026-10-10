@@ -9,9 +9,8 @@ from pathlib import Path
 import re
 import shutil
 
-from regress_stack import topology
 from regress_stack.core.deployment import Context
-from regress_stack.modules import keystone, neutron, ovn, utils
+from regress_stack.modules import keystone, neutron, utils
 from regress_stack.multinode import common, coordination
 
 
@@ -75,11 +74,6 @@ def configure(name: str) -> None:
     finish(name)
 
 
-def configure_metadata_agent(name: str) -> None:
-    """Compute nodes run only the Neutron metadata agent."""
-    metadata_agent()
-
-
 def prepare(name: str) -> None:
     """Set multinode options before the existing module configures and starts."""
     context = common.context()
@@ -98,7 +92,7 @@ def prepare(name: str) -> None:
 
 def finish(name: str) -> None:
     if name == "neutron":
-        metadata_agent()
+        neutron.setup_metadata_agent()
     elif name == "cinder":
         common.restart("cinder-volume")
 
@@ -167,20 +161,3 @@ _PREPARATIONS: dict[str, Callable[[Context], None]] = {
     "cinder": _prepare_cinder,
     "heat": _prepare_heat,
 }
-
-
-def metadata_agent() -> None:
-    context = common.context()
-    utils.cfg_set(
-        neutron.METADATA_AGENT_CONF,
-        ("DEFAULT", "nova_metadata_host", context.deployment.api_address),
-        (
-            "DEFAULT",
-            "nova_metadata_port",
-            str(context.deployment.api_port(8775)),
-        ),
-        ("DEFAULT", "metadata_proxy_shared_secret", context.secret("neutron/metadata")),
-        ("ovs", "ovsdb_connection", topology.ovsdb_connection()),
-        ("ovn", "ovn_sb_connection", ovn.sb_connection()),
-    )
-    common.restart("neutron-ovn-metadata-agent")
