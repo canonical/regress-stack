@@ -1,0 +1,128 @@
+name: Multinode Tests
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hyperconverged:
+    name: hyperconverged (${{ matrix.release }}-${{ matrix.openstack }})
+    timeout-minutes: 300
+    runs-on: [self-hosted, linux, X64, 2xlarge-extra, noble]
+    env:
+      MULTINODE_RELEASE: ${{ matrix.release }}
+      MULTINODE_ARTIFACTS: ${{ github.workspace }}/multinode-artifacts
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - release: jammy
+            openstack: yoga
+          - release: noble
+            openstack: caracal
+          - release: resolute
+            openstack: gazpacho
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Define private working directory
+        run: |
+          printf 'MULTINODE_WORK_DIR=%s\n' \
+            "$RUNNER_TEMP/regress-multinode-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.release }}" \
+            >> "$GITHUB_ENV"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.4
+          terraform_wrapper: false
+
+      - name: Check Terraform and shell scripts
+        run: |
+          set -euo pipefail
+          terraform -chdir=tests/functional/multinode fmt -check
+          terraform -chdir=tests/functional/multinode init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=tests/functional/multinode validate
+          terraform -chdir=tests/functional/multinode test
+          sudo apt-get update
+          sudo apt-get install -y jq shellcheck
+          shellcheck tests/functional/multinode/*.sh
+
+      - name: Set up LXD
+        run: |
+          set -euo pipefail
+          sudo snap refresh --channel 5.21/stable lxd \
+            || sudo snap install --channel 5.21/stable lxd
+          sudo lxd init --auto
+
+      - name: Check host and prepare private state
+        run: |
+          sudo --preserve-env=MULTINODE_RELEASE,MULTINODE_WORK_DIR,MULTINODE_ARTIFACTS,PATH \
+            bash tests/functional/multinode/run.sh prepare
+
+      - name: Provision three LXD VMs
+        timeout-minutes: 35
+        run: |
+          sudo --preserve-env=MULTINODE_RELEASE,MULTINODE_WORK_DIR,MULTINODE_ARTIFACTS,PATH \
+            bash tests/functional/multinode/run.sh provision
+
+      - name: Install node packages
+        timeout-minutes: 45
+        run: |
+          sudo --preserve-env=MULTINODE_RELEASE,MULTINODE_WORK_DIR,MULTINODE_ARTIFACTS,PATH \
+            bash tests/functional/multinode/run.sh install
+
+      - name: Bootstrap and join controllers
+        timeout-minutes: 45
+        run: |
+          sudo --preserve-env=MULTINODE_RELEASE,MULTINODE_WORK_DIR,MULTINODE_ARTIFACTS,PATH \
+            bash tests/functional/multinode/run.sh setup
+
+      - name: Check all controllers are ready
+        timeout-minutes: 15
+        run: |
+          sudo --preserve-env=MULTINODE_RELEASE,MULTINODE_WORK_DIR,MULTINODE_ARTIFACTS,PATH \
+            bash tests/functional/multinode/run.sh ready
+
+      - name: Run Tempest
+        timeout-minutes: 65
+        run: |
+          sudo --preserve-env=MULTINODE_RELEASE,MULTINODE_WORK_DIR,MULTINODE_ARTIFACTS,PATH \
+            bash tests/functional/multinode/run.sh test
+
+      - name: Check readiness after Tempest
+        timeout-minutes: 15
+        run: |
+          sudo --preserve-env=MULTINODE_RELEASE,MULTINODE_WORK_DIR,MULTINODE_ARTIFACTS,PATH \
+            bash tests/functional/multinode/run.sh ready-after
+
+      - name: Collect sanitized diagnostics
+        if: always()
+        run: |
+          sudo --preserve-env=MULTINODE_RELEASE,MULTINODE_WORK_DIR,MULTINODE_ARTIFACTS,PATH \
+            bash tests/functional/multinode/run.sh diagnostics
+
+      - name: Destroy test resources
+        if: always()
+        run: |
+          sudo --preserve-env=MULTINODE_RELEASE,MULTINODE_WORK_DIR,MULTINODE_ARTIFACTS,PATH \
+            bash tests/functional/multinode/run.sh cleanup
+
+      - name: Make sanitized artifacts readable by the runner
+        if: always()
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/multinode-artifacts" ]; then
+            sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE/multinode-artifacts"
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hyperconverged-${{ matrix.release }}-${{ matrix.openstack }}
+          path: multinode-artifacts/
+          if-no-files-found: error
