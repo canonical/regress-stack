@@ -148,7 +148,7 @@ def authtoken_service(service: str, password: str) -> typing.Dict[str, str]:
     return {
         **account_dict(service, password),
         "www_authenticate_uri": OS_AUTH_URL,
-        "service_token_roles": "admin",
+        "service_token_roles": "admin,service",
         "service_token_roles_required": "true",
     }
 
@@ -229,8 +229,11 @@ def ensure_service_account(name: str, type: str, url: str) -> typing.Tuple[str, 
 
     user = ensure_user(name, password, service_domain())
     ensure_admin(user, service_project())
+    ensure_service_role(user, service_project())
+
     service = ensure_service(name, type)
     ensure_endpoint(service, url)
+
     return name, password
 
 
@@ -266,6 +269,15 @@ def ensure_admin(user, project):
     LOG.debug("Ensuring user %r is admin of project %r...", user.name, project)
 
     conn.identity.assign_project_role_to_user(project, user, admin_role().id)
+
+
+def ensure_service_role(user, project):
+    conn = o7k()
+    LOG.debug(
+        'Ensuring user %r has "service" role on project %r...', user.name, project
+    )
+
+    conn.identity.assign_project_role_to_user(project, user, ensure_role("service").id)
 
 
 def ensure_service(name: str, type: str):

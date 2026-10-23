@@ -1,5 +1,7 @@
 # Python-generated files
 __pycache__/
+.ruff_cache/
+.pytest_cache/
 *.py[oc]
 build/
 dist/
@@ -7,8 +9,12 @@ wheels/
 *.egg-info
 
 # Spread generated files
-.spread-reuse.yaml
+.spread-reuse*.yaml
 spread.yaml
 
 # Virtual environments
 .venv
+
+# IDE
+.idea/
+.vscode/
