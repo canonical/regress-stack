@@ -47,14 +47,24 @@ jobs:
         id: generate-releases
         run: |
           set -euxo pipefail
+          # A pre-release series ("Active Development" / "Pre-release Freeze")
+          # is only tested once its feature freeze has passed. The feature freeze
+          # date is a calendar milestone not exposed by the Launchpad API, so
+          # it is hardcoded here and must be updated each cycle.
+          # See https://documentation.ubuntu.com/release-notes/27.04/schedule/
+          FEATURE_FREEZE_DATES='{"tenacious":"2027-02-25"}'
           echo -n releases= >> ${GITHUB_OUTPUT}
           curl -s https://api.launchpad.net/devel/ubuntu/series | \
-            jq '.entries[] | select(.version >= "22.04" and
-                                    (.status == "Supported" or
-                                     .status == "Current Stable Release" or
-                                     .status == "Active Development" or
-                                     .status == "Pre-release Freeze")) |
-                .name' | jq -cs | \
+            jq --argjson feature_freeze "$FEATURE_FREEZE_DATES" \
+               --arg today "$(date -u +%Y-%m-%d)" '
+                .entries[]
+                | select(.version >= "22.04")
+                | select(
+                    (.status == "Supported" or .status == "Current Stable Release")
+                    or ($feature_freeze[.name] != null
+                        and $feature_freeze[.name] <= $today)
+                  )
+                | .name' | jq -cs | \
             tee -a ${GITHUB_OUTPUT}
           cat ${GITHUB_OUTPUT}
   functional-tests:
