@@ -8,7 +8,12 @@ on:
   workflow_run:
     workflows: ["Pull Request", "Functional Tests"]
     types: [completed]
-    branches: [main]
+    branches:
+      - main
+      - "feat/**"
+      - "feature/**"
+      - "fix/**"
+      - "dependabot/**"
 
 if: ${{ github.event.workflow_run.conclusion == 'failure' }}
 
