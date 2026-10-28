@@ -85,6 +85,27 @@ Packages are installed from different sources depending on the [priority values]
 - `500`: Give the PPA the same priority as `proposed` and select the newest version.
 - `400`: Prefer Ubuntu packages and use the PPA for packages unavailable in Ubuntu.
 
+## CI Doctor (GitHub Agentic Workflow)
+
+Failed `Pull Request` and `Functional Tests` runs on `main` are investigated by
+the [CI Doctor](https://github.com/githubnext/agentics/blob/main/workflows/ci-doctor.md)
+[agentic workflow](https://github.github.com/gh-aw/). It reads the failed job
+logs, correlates them with the commit under test and opens (or comments on) a
+`[CI failure]` issue with the likely root cause and suggested fixes.
+
+Inference uses Anthropic Claude (`anthropic/claude-sonnet-5.5`) through
+[OpenRouter](https://openrouter.ai/). To enable it, add an `OPENROUTER_API_KEY`
+repository secret.
+
+The workflow is defined in `.github/workflows/ci-doctor.md`. After editing it,
+regenerate the lock file with the [`gh aw`](https://github.com/github/gh-aw)
+extension and commit both files:
+
+```bash
+gh extension install github/gh-aw
+gh aw compile ci-doctor
+```
+
 ## Contributing
 
 We welcome contributions from the community! If you have ideas for new features or improvements, feel free to open an issue or submit a pull request.
