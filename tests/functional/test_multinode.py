@@ -102,7 +102,12 @@ if name == "terraform":
             values = json.loads((directory / "terraform.tfvars.json").read_text())
             print(values["run_id"] + "-ci")
         else:
-            print(json.dumps({"schema": 1, "profile": "hyperconverged"}))
+            controllers = [{"name": f"node{index}"} for index in (1, 2, 3)]
+            print(
+                json.dumps(
+                    {"schema": 1, "profile": "hyperconverged", "controllers": controllers}
+                )
+            )
     sys.exit(0)
 if "cat" in args:
     if os.environ.get("MISSING_CREDENTIALS"):
@@ -334,6 +339,48 @@ def test_all_cli_always_cleans_up_and_propagates_failure(shell_cli, failure):
     if failure is None:
         ready = [command for command in commands if command[-1] == "ready"]
         assert len(ready) == 6
+
+
+def guest_readiness_nodes(calls):
+    commands = [json.loads(line) for line in calls.read_text().splitlines()]
+    readiness = ["/root/multinode-guest.sh", "ready"]
+    return [command[5] for command in commands if command[-2:] == readiness]
+
+
+def test_ready_checks_only_controllers(shell_cli):
+    run, work, artifacts, calls = shell_cli
+    (artifacts / "inventory.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "profile": "control",
+                "controllers": [{"name": "node1"}],
+                "computes": [{"name": "node2"}, {"name": "node3"}],
+            }
+        )
+    )
+    result = run("ready")
+    assert result.returncode == 0, result.stderr
+    assert guest_readiness_nodes(calls) == ["node1"]
+
+
+def test_ready_fails_before_guest_checks_without_controllers(shell_cli):
+    run, work, artifacts, calls = shell_cli
+    (artifacts / "inventory.json").write_text(
+        json.dumps({"schema": 1, "profile": "control", "controllers": []})
+    )
+    result = run("ready")
+    assert result.returncode == 1
+    assert "The inventory lists no controllers" in result.stdout
+    assert not calls.exists() or guest_readiness_nodes(calls) == []
+
+
+def test_ready_reports_an_unreadable_inventory(shell_cli):
+    run, work, artifacts, calls = shell_cli
+    result = run("ready")
+    assert result.returncode == 1
+    assert "Cannot read the controllers" in result.stdout
+    assert not calls.exists() or guest_readiness_nodes(calls) == []
 
 
 def test_preflight_failure_creates_no_lxd_resources(shell_cli):
