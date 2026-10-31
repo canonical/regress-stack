@@ -121,6 +121,15 @@ def test_control_database_routing_uses_reachable_controller(context):
             )
 
 
+def test_three_controller_control_database_routing_uses_local_haproxy(context):
+    deployment = dataclasses.replace(context.deployment, profile="control")
+    node = dataclasses.replace(context, deployment=deployment)
+    with activate(node):
+        assert mysql.connection_string("nova", "nova", "pw").endswith(
+            "@127.0.0.1:13306/nova"
+        )
+
+
 def test_join_grows_existing_quorum_queues(peer, monkeypatch):
     monkeypatch.setattr(common, "done", lambda _: False)
     for name in ("write", "restart", "mark"):
