@@ -181,7 +181,7 @@ prepare() {
 }
 
 forwarding() {
-    local action=$1 bridge direction status=0
+    local action=$1 bridge direction proto status=0
     local rule
     for bridge in "$(jq -r '.run_id' "$work_dir/terraform/terraform.tfvars.json")-m" \
         "$(jq -r '.run_id' "$work_dir/terraform/terraform.tfvars.json")-p"; do
@@ -197,6 +197,18 @@ forwarding() {
                 run "host-unforward-$bridge-$direction" 30 iptables -D FORWARD "${rule[@]}" || status=$?
             fi
         done
+    done
+    # Guests resolve names through LXD's dnsmasq on the management bridge
+    # gateway. Accept that DNS traffic so a restrictive host INPUT policy,
+    # such as ufw's default deny, does not break package installation.
+    bridge="$(jq -r '.run_id' "$work_dir/terraform/terraform.tfvars.json")-m"
+    for proto in udp tcp; do
+        rule=(-i "$bridge" -p "$proto" --dport 53 -j ACCEPT)
+        if [[ "$action" == add ]]; then
+            run "host-dns-$bridge-$proto" 30 iptables -I INPUT "${rule[@]}"
+        elif iptables -C INPUT "${rule[@]}" >/dev/null 2>&1; then
+            run "host-undns-$bridge-$proto" 30 iptables -D INPUT "${rule[@]}" || status=$?
+        fi
     done
     return "$status"
 }

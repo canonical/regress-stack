@@ -280,7 +280,9 @@ def test_cleanup_uses_only_own_state_and_bridge_rules(shell_cli, failure):
     assert destroys[0][1] == f"-chdir={work}/terraform"
     assert not any("delete" in command for command in commands)
     deleted_rules = [command for command in commands if "-D" in command]
-    assert len(deleted_rules) == 4
+    # Two FORWARD rules per bridge and the DNS INPUT rules, each deleted once.
+    assert len(deleted_rules) == 6
+    assert len({json.dumps(command) for command in deleted_rules}) == 6
     assert all(
         any(bridge in command for bridge in ("rs12345678-m", "rs12345678-p"))
         for command in deleted_rules
