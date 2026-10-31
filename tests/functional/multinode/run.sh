@@ -64,22 +64,28 @@ preflight() {
     }
 }
 
+# Read a private guest file. As in run(), start lxc exec in a new session so a
+# terminal cannot stop it with SIGTTIN; --kill-after bounds the wait if it hangs.
+guest_read() {
+    setsid -w timeout --signal=TERM --kill-after=30s 30s \
+        lxc --force-local --project "$project" exec "$1" --mode=non-interactive -- cat "$2" \
+        < /dev/null 2>/dev/null
+}
+
 collect_credentials() {
     local node
     mkdir -p "$work_dir/credentials"
     for node in "${nodes[@]}"; do
         if [[ -e "$work_dir/setup-$node" ]]; then
-            if ! timeout 30s lxc --force-local --project "$project" exec "$node" -- \
-                cat /var/lib/regress-stack/multinode/context.json \
-                > "$work_dir/credentials/$node.json" 2>/dev/null; then
+            if ! guest_read "$node" /var/lib/regress-stack/multinode/context.json \
+                > "$work_dir/credentials/$node.json"; then
                 return 1
             fi
         fi
     done
     if [[ -e "$work_dir/test-started" ]]; then
-        timeout 30s lxc --force-local --project "$project" exec node1 -- \
-            cat /root/regress-stack/src/mycloud01/etc/tempest.conf \
-            > "$work_dir/credentials/tempest.conf" 2>/dev/null || return 1
+        guest_read node1 /root/regress-stack/src/mycloud01/etc/tempest.conf \
+            > "$work_dir/credentials/tempest.conf" || return 1
     fi
 }
 
@@ -129,7 +135,10 @@ run() {
             --done "$work_dir/logs/$name.done" --prefix "[$phase] [$name/stdout] " &
         follower_pid=$!
     fi
-    timeout --signal=TERM --kill-after=30s "${seconds}s" "$@" \
+    # Detach from any controlling terminal: when run.sh is started from a
+    # terminal, lxc exec in this background process group otherwise receives
+    # SIGTTIN, forwards it to the guest command and stalls until the timeout.
+    setsid -w timeout --signal=TERM --kill-after=30s "${seconds}s" "$@" \
         > "$work_dir/logs/$name.stdout" 2> "$work_dir/logs/$name.stderr" &
     command_pid=$!
     (
