@@ -72,11 +72,12 @@ TEST_EXCLUDE_REGEXES = [
     "barbican_tempest_plugin.tests.scenario.test_image_signing.ImageSigningSnapshotTest.test_signed_image_upload_boot_snapshot",
     "barbican_tempest_plugin.tests.scenario.test_volume_encryption.VolumeEncryptionTest.test_encrypted_cinder_volumes_cryptsetup",
     "barbican_tempest_plugin.tests.scenario.test_volume_encryption.VolumeEncryptionTest.test_encrypted_cinder_volumes_luks",
-    # The rbac tests check secure RBAC personas. Under the relaxed legacy
-    # policy above, their member and reader users lack "creator" and get
-    # 403 on secret and order creation (210 of 309 fail on Noble).
-    "barbican_tempest_plugin.tests.rbac",
 ]
+# The rbac tests check secure RBAC personas. Under the relaxed legacy policy
+# for barbican-tempest-plugin < 4.0.0, their member and reader users lack
+# "creator" and get 403 on secret and order creation (210 of 309 fail on
+# Noble). Newer plugins run with secure RBAC, so exclude them only there.
+LEGACY_POLICY_EXCLUDE_REGEXES = ["barbican_tempest_plugin.tests.rbac"]
 
 # Tempest >= 26.0.0 removed CONF.scenario.img_dir from its config schema,
 # but barbican-tempest-plugin < 4.0.0 still references it in
@@ -166,6 +167,7 @@ def key_manager_cfg() -> typing.Dict[str, str]:
 
 def configure_tempest(tempest_conf: pathlib.Path):
     """Configure tempest for barbican."""
+    _exclude_legacy_policy_tests()
     conf = str(tempest_conf)
     module_utils.cfg_set(
         conf,
@@ -196,6 +198,18 @@ def configure_tempest(tempest_conf: pathlib.Path):
         ("compute_feature_enabled", "attach_encrypted_volume", "True"),
     )
     _configure_tempest_image(tempest_conf)
+
+
+def _exclude_legacy_policy_tests():
+    """Exclude tests that need secure RBAC when setup relaxed the policy.
+
+    regress-stack reads TEST_EXCLUDE_REGEXES after configure_tempest().
+    """
+    if not _barbican_plugin_needs_img_dir():
+        return
+    for regex in LEGACY_POLICY_EXCLUDE_REGEXES:
+        if regex not in TEST_EXCLUDE_REGEXES:
+            TEST_EXCLUDE_REGEXES.append(regex)
 
 
 def _configure_tempest_image(tempest_conf: pathlib.Path):

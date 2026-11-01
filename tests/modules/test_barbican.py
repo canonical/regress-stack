@@ -223,3 +223,45 @@ def test_img_file_empty_noop(tmp_path, monkeypatch):
 
     assert cfg_calls == []
     assert not (tempest_conf.parent.parent / "sitecustomize.py").exists()
+
+
+class _PluginVersion:
+    def __init__(self, old):
+        self.old = old
+
+    def __lt__(self, other):
+        return self.old and other == barbican.BARBICAN_PLUGIN_NO_IMG_DIR
+
+
+def test_legacy_plugin_excludes_rbac_tests(monkeypatch):
+    """With barbican-tempest-plugin < 4.0.0, the rbac tests are excluded."""
+    monkeypatch.setattr(
+        barbican, "TEST_EXCLUDE_REGEXES", list(barbican.TEST_EXCLUDE_REGEXES)
+    )
+    monkeypatch.setattr(
+        barbican.core_apt,
+        "PkgVersionCompare",
+        lambda *args, **kwargs: _PluginVersion(old=True),
+    )
+
+    barbican._exclude_legacy_policy_tests()
+    barbican._exclude_legacy_policy_tests()
+
+    rbac = "barbican_tempest_plugin.tests.rbac"
+    assert barbican.TEST_EXCLUDE_REGEXES.count(rbac) == 1
+
+
+def test_modern_plugin_runs_rbac_tests(monkeypatch):
+    """With barbican-tempest-plugin >= 4.0.0, the rbac tests stay included."""
+    monkeypatch.setattr(
+        barbican, "TEST_EXCLUDE_REGEXES", list(barbican.TEST_EXCLUDE_REGEXES)
+    )
+    monkeypatch.setattr(
+        barbican.core_apt,
+        "PkgVersionCompare",
+        lambda *args, **kwargs: _PluginVersion(old=False),
+    )
+
+    barbican._exclude_legacy_policy_tests()
+
+    assert "barbican_tempest_plugin.tests.rbac" not in barbican.TEST_EXCLUDE_REGEXES
