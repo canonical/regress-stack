@@ -43,7 +43,12 @@ case "$1" in
         apt-get install -y "${package_names[@]}"
         test -e /dev/kvm
         # Keep unconfigured package listeners away from the bootstrap VIP.
-        systemctl stop apache2 rabbitmq-server
+        # Compute-only nodes install neither service.
+        for unit in apache2 rabbitmq-server; do
+            if systemctl cat "$unit.service" >/dev/null 2>&1; then
+                systemctl stop "$unit"
+            fi
+        done
         ;;
     setup)
         python3 -m regress_stack setup --inventory /root/inventory.json \

@@ -64,7 +64,7 @@ resource "lxd_instance" "node" {
   config = {
     "limits.cpu"           = "8"
     "limits.memory"        = "24GiB"
-    "cloud-init.user-data" = "#cloud-config\n${yamlencode({ hostname = each.key, manage_etc_hosts = true })}"
+    "cloud-init.user-data" = "#cloud-config\n${yamlencode({ hostname = each.key, manage_etc_hosts = "localhost" })}"
     "cloud-init.network-config" = yamlencode({
       version = 2
       ethernets = {

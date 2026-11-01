@@ -64,22 +64,28 @@ preflight() {
     }
 }
 
+# Read a private guest file. As in run(), start lxc exec in a new session so a
+# terminal cannot stop it with SIGTTIN; --kill-after bounds the wait if it hangs.
+guest_read() {
+    setsid -w timeout --signal=TERM --kill-after=30s 30s \
+        lxc --force-local --project "$project" exec "$1" --mode=non-interactive -- cat "$2" \
+        < /dev/null 2>/dev/null
+}
+
 collect_credentials() {
     local node
     mkdir -p "$work_dir/credentials"
     for node in "${nodes[@]}"; do
         if [[ -e "$work_dir/setup-$node" ]]; then
-            if ! timeout 30s lxc --force-local --project "$project" exec "$node" -- \
-                cat /var/lib/regress-stack/multinode/context.json \
-                > "$work_dir/credentials/$node.json" 2>/dev/null; then
+            if ! guest_read "$node" /var/lib/regress-stack/multinode/context.json \
+                > "$work_dir/credentials/$node.json"; then
                 return 1
             fi
         fi
     done
     if [[ -e "$work_dir/test-started" ]]; then
-        timeout 30s lxc --force-local --project "$project" exec node1 -- \
-            cat /root/regress-stack/src/mycloud01/etc/tempest.conf \
-            > "$work_dir/credentials/tempest.conf" 2>/dev/null || return 1
+        guest_read node1 /root/regress-stack/src/mycloud01/etc/tempest.conf \
+            > "$work_dir/credentials/tempest.conf" || return 1
     fi
 }
 
@@ -129,7 +135,10 @@ run() {
             --done "$work_dir/logs/$name.done" --prefix "[$phase] [$name/stdout] " &
         follower_pid=$!
     fi
-    timeout --signal=TERM --kill-after=30s "${seconds}s" "$@" \
+    # Detach from any controlling terminal: when run.sh is started from a
+    # terminal, lxc exec in this background process group otherwise receives
+    # SIGTTIN, forwards it to the guest command and stalls until the timeout.
+    setsid -w timeout --signal=TERM --kill-after=30s "${seconds}s" "$@" \
         > "$work_dir/logs/$name.stdout" 2> "$work_dir/logs/$name.stderr" &
     command_pid=$!
     (
@@ -180,8 +189,24 @@ prepare() {
     log "Host prerequisites passed; private Terraform state prepared"
 }
 
+# Add a host rule only when it is missing, and remove every copy. Rerunning
+# provision must not leave duplicate rules behind after cleanup.
+host_rule() {
+    local action=$1 name=$2 chain=$3
+    shift 3
+    if [[ "$action" == add ]]; then
+        if ! iptables -C "$chain" "$@" >/dev/null 2>&1; then
+            run "host-$name" 30 iptables -I "$chain" "$@"
+        fi
+    else
+        while iptables -C "$chain" "$@" >/dev/null 2>&1; do
+            run "host-un$name" 30 iptables -D "$chain" "$@" || return
+        done
+    fi
+}
+
 forwarding() {
-    local action=$1 bridge direction status=0
+    local action=$1 bridge direction proto status=0
     local rule
     for bridge in "$(jq -r '.run_id' "$work_dir/terraform/terraform.tfvars.json")-m" \
         "$(jq -r '.run_id' "$work_dir/terraform/terraform.tfvars.json")-p"; do
@@ -192,11 +217,23 @@ forwarding() {
                 rule=(-o "$bridge" -m conntrack --ctstate "RELATED,ESTABLISHED" -j ACCEPT)
             fi
             if [[ "$action" == add ]]; then
-                run "host-forward-$bridge-$direction" 30 iptables -I FORWARD "${rule[@]}"
-            elif iptables -C FORWARD "${rule[@]}" >/dev/null 2>&1; then
-                run "host-unforward-$bridge-$direction" 30 iptables -D FORWARD "${rule[@]}" || status=$?
+                host_rule add "forward-$bridge-$direction" FORWARD "${rule[@]}"
+            else
+                host_rule remove "forward-$bridge-$direction" FORWARD "${rule[@]}" || status=$?
             fi
         done
+    done
+    # Guests resolve names through LXD's dnsmasq on the management bridge
+    # gateway. Accept that DNS traffic so a restrictive host INPUT policy,
+    # such as ufw's default deny, does not break package installation.
+    bridge="$(jq -r '.run_id' "$work_dir/terraform/terraform.tfvars.json")-m"
+    for proto in udp tcp; do
+        rule=(-i "$bridge" -p "$proto" --dport 53 -j ACCEPT)
+        if [[ "$action" == add ]]; then
+            host_rule add "dns-$bridge-$proto" INPUT "${rule[@]}"
+        else
+            host_rule remove "dns-$bridge-$proto" INPUT "${rule[@]}" || status=$?
+        fi
     done
     return "$status"
 }
@@ -247,7 +284,14 @@ setup() {
 }
 
 ready() {
-    local node attempt=0 status remaining deadline=$((SECONDS + 900)) pending=("${nodes[@]}") next=()
+    local node attempt=0 status remaining deadline=$((SECONDS + 900)) pending=() next=()
+    local controllers
+    # Readiness refuses compute-only nodes; the controllers' checks cover them.
+    controllers=$(jq -r '.controllers[].name' "$artifacts/inventory.json") || {
+        log "Cannot read the controllers from $artifacts/inventory.json"; return 1;
+    }
+    [[ -n "$controllers" ]] || { log "The inventory lists no controllers"; return 1; }
+    mapfile -t pending <<< "$controllers"
     while ((SECONDS < deadline)); do
         attempt=$((attempt + 1))
         next=()
