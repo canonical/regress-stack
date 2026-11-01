@@ -43,11 +43,12 @@ TEST_EXCLUDE_REGEXES = [
 
 
 def cfn_url() -> str:
-    return topology.service_url(8004, "/v1")
+    # heat-api-cfn listens on 8000, the same server as metadata_url().
+    return topology.service_url(8000, "/v1")
 
 
 def orchestration_url() -> str:
-    return cfn_url() + "/%(tenant_id)s"
+    return topology.service_url(8004, "/v1/%(tenant_id)s")
 
 
 def metadata_url() -> str:
