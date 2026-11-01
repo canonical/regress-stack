@@ -36,8 +36,9 @@ TEST_EXCLUDE_REGEXES = [
     # These two are failing and excluded from upstream CI
     "ClusterTest.test_create_cluster_with_zero_nodes",
     "ClusterTest.test_create_list_sign_delete_clusters",
-    # Secure RBAC disabled for now
-    "rbac",
+    # Secure RBAC disabled for now. Keep this to magnum's own tests: the
+    # exclude list is global, and barbican includes its rbac tests.
+    r"magnum_tempest_plugin\..*rbac",
     # Only works in `--serial`
     "ClusterTest.test_create_cluster_with_nonexisting_flavor",
 ]

@@ -72,6 +72,10 @@ TEST_EXCLUDE_REGEXES = [
     "barbican_tempest_plugin.tests.scenario.test_image_signing.ImageSigningSnapshotTest.test_signed_image_upload_boot_snapshot",
     "barbican_tempest_plugin.tests.scenario.test_volume_encryption.VolumeEncryptionTest.test_encrypted_cinder_volumes_cryptsetup",
     "barbican_tempest_plugin.tests.scenario.test_volume_encryption.VolumeEncryptionTest.test_encrypted_cinder_volumes_luks",
+    # The rbac tests check secure RBAC personas. Under the relaxed legacy
+    # policy above, their member and reader users lack "creator" and get
+    # 403 on secret and order creation (210 of 309 fail on Noble).
+    "barbican_tempest_plugin.tests.rbac",
 ]
 
 # Tempest >= 26.0.0 removed CONF.scenario.img_dir from its config schema,
