@@ -1,7 +1,10 @@
 # Copyright 2025 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
+import logging
 import pathlib
 import platform
+import subprocess
+import time
 
 from regress_stack.core import apt
 from regress_stack.core import utils as core_utils
@@ -28,6 +31,8 @@ AUTH_POLICY = "/etc/magnum/keystone_auth_default_policy.json"
 URL = f"http://{core_utils.my_ip()}:9511/v1"
 SERVICE = "magnum"
 SERVICE_TYPE = "container-infra"
+
+LOG = logging.getLogger(__name__)
 MAGNUM_DOMAIN_ADMIN = "magnum_admin"
 MAGNUM_ADMIN_DOMAIN_PASSWORD = "changeme"
 
@@ -171,6 +176,7 @@ COREOS_38 = "38.20230806.3.0"
 COREOS_35 = "35.20220116.3.0"
 COREOS_31 = "31.20200323.3.2"
 COREOS = "https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/{version}/{platform}/fedora-coreos-{version}-openstack.{platform}.qcow2.xz"
+COREOS_DOWNLOAD_ATTEMPTS = 5
 
 
 def configure_tempest(tempest_conf: pathlib.Path):
@@ -196,7 +202,7 @@ def configure_tempest(tempest_conf: pathlib.Path):
     filepath = tempest_conf_dir / filename
     uncompressed_path = filepath.with_suffix("")
     if not uncompressed_path.exists():
-        core_utils.run("wget", [coreos_image], cwd=str(tempest_conf_dir))
+        _download(coreos_image, filename, str(tempest_conf_dir))
         core_utils.run("unxz", [filename], cwd=str(tempest_conf_dir))
 
     image = glance.ensure_image(
@@ -240,3 +246,25 @@ def configure_tempest(tempest_conf: pathlib.Path):
             },
         ),
     )
+
+
+def _download(url: str, filename: str, cwd: str):
+    """Download url to filename, retrying transient failures.
+
+    wget does not retry a failed TLS handshake, and without a timeout a
+    stalled handshake waits 15 minutes before failing.
+    """
+    for attempt in range(1, COREOS_DOWNLOAD_ATTEMPTS + 1):
+        try:
+            core_utils.run("wget", ["--timeout=60", "-O", filename, url], cwd=cwd)
+            return
+        except subprocess.CalledProcessError:
+            if attempt == COREOS_DOWNLOAD_ATTEMPTS:
+                raise
+            LOG.warning(
+                "Downloading %s failed, retrying (%d/%d)",
+                url,
+                attempt,
+                COREOS_DOWNLOAD_ATTEMPTS,
+            )
+            time.sleep(60)
