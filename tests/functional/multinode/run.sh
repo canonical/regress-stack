@@ -189,6 +189,22 @@ prepare() {
     log "Host prerequisites passed; private Terraform state prepared"
 }
 
+# Add a host rule only when it is missing, and remove every copy. Rerunning
+# provision must not leave duplicate rules behind after cleanup.
+host_rule() {
+    local action=$1 name=$2 chain=$3
+    shift 3
+    if [[ "$action" == add ]]; then
+        if ! iptables -C "$chain" "$@" >/dev/null 2>&1; then
+            run "host-$name" 30 iptables -I "$chain" "$@"
+        fi
+    else
+        while iptables -C "$chain" "$@" >/dev/null 2>&1; do
+            run "host-un$name" 30 iptables -D "$chain" "$@" || return
+        done
+    fi
+}
+
 forwarding() {
     local action=$1 bridge direction proto status=0
     local rule
@@ -201,9 +217,9 @@ forwarding() {
                 rule=(-o "$bridge" -m conntrack --ctstate "RELATED,ESTABLISHED" -j ACCEPT)
             fi
             if [[ "$action" == add ]]; then
-                run "host-forward-$bridge-$direction" 30 iptables -I FORWARD "${rule[@]}"
-            elif iptables -C FORWARD "${rule[@]}" >/dev/null 2>&1; then
-                run "host-unforward-$bridge-$direction" 30 iptables -D FORWARD "${rule[@]}" || status=$?
+                host_rule add "forward-$bridge-$direction" FORWARD "${rule[@]}"
+            else
+                host_rule remove "forward-$bridge-$direction" FORWARD "${rule[@]}" || status=$?
             fi
         done
     done
@@ -214,9 +230,9 @@ forwarding() {
     for proto in udp tcp; do
         rule=(-i "$bridge" -p "$proto" --dport 53 -j ACCEPT)
         if [[ "$action" == add ]]; then
-            run "host-dns-$bridge-$proto" 30 iptables -I INPUT "${rule[@]}"
-        elif iptables -C INPUT "${rule[@]}" >/dev/null 2>&1; then
-            run "host-undns-$bridge-$proto" 30 iptables -D INPUT "${rule[@]}" || status=$?
+            host_rule add "dns-$bridge-$proto" INPUT "${rule[@]}"
+        else
+            host_rule remove "dns-$bridge-$proto" INPUT "${rule[@]}" || status=$?
         fi
     done
     return "$status"

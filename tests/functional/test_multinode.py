@@ -86,6 +86,19 @@ args = sys.argv[1:]
 with open(os.environ["CALLS"], "a") as output:
     output.write(json.dumps([name, *args]) + "\n")
 if name == "iptables":
+    # Count copies of each rule; RULE_COPIES seeds rules the host already has.
+    action, rule = args[0], json.dumps(args[1:])
+    state = Path(os.environ["CALLS"]).with_name("iptables-rules.json")
+    counts = json.loads(state.read_text()) if state.exists() else {}
+    count = counts.get(rule, int(os.environ.get("RULE_COPIES") or 0))
+    if action == "-I":
+        count += 1
+    elif action == "-D" and count:
+        count -= 1
+    elif action in {"-C", "-D"} and not count:
+        sys.exit(1)
+    counts[rule] = count
+    state.write_text(json.dumps(counts))
     sys.exit(0)
 if name == "terraform":
     directory = Path(args[0].removeprefix("-chdir="))
@@ -278,7 +291,7 @@ def test_command_streams_remain_separate(shell_cli):
 @pytest.mark.parametrize("failure", [None, "cleanup"])
 def test_cleanup_uses_only_own_state_and_bridge_rules(shell_cli, failure):
     run, work, artifacts, calls = shell_cli
-    result = run("cleanup", FAIL=failure or "")
+    result = run("cleanup", FAIL=failure or "", RULE_COPIES="1")
     commands = [json.loads(line) for line in calls.read_text().splitlines()]
     destroys = [command for command in commands if "destroy" in command]
     assert len(destroys) == 1
@@ -299,6 +312,26 @@ def test_cleanup_uses_only_own_state_and_bridge_rules(shell_cli, failure):
         json.loads((artifacts / "phase-cleanup.json").read_text())["exit_status"]
         == result.returncode
     )
+
+
+def test_provision_rerun_inserts_each_host_rule_once(shell_cli):
+    run, work, artifacts, calls = shell_cli
+    assert run("provision").returncode == 0
+    assert run("provision").returncode == 0
+    commands = [json.loads(line) for line in calls.read_text().splitlines()]
+    inserted = [command for command in commands if command[:2] == ["iptables", "-I"]]
+    assert len(inserted) == 6
+    assert len({json.dumps(command) for command in inserted}) == 6
+
+
+def test_cleanup_removes_duplicate_host_rules(shell_cli):
+    run, work, artifacts, calls = shell_cli
+    assert run("cleanup", RULE_COPIES="2").returncode == 0
+    commands = [json.loads(line) for line in calls.read_text().splitlines()]
+    deleted = [command for command in commands if command[:2] == ["iptables", "-D"]]
+    assert len(deleted) == 12
+    state = json.loads((calls.parent / "iptables-rules.json").read_text())
+    assert set(state.values()) == {0}
 
 
 def test_cli_rejects_overlapping_private_and_public_directories(tmp_path):
