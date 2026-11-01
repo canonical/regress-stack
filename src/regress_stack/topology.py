@@ -143,7 +143,8 @@ def database_host() -> str:
     ctx = context()
     if ctx is None:
         return "localhost"
-    if ctx.deployment.profile is Profile.CONTROL:
+    if not ctx.deployment.highly_available:
+        # One controller: its MySQL listens on the API address.
         return f"{ctx.deployment.api_address}:3306"
     # The local HAProxy routes to the current Group Replication primary.
     return "127.0.0.1:13306"

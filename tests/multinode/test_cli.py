@@ -124,6 +124,18 @@ def test_tempest_explicit_state_runs_on_controllers_only(
     assert options == {"collect_failure_logs": False}
 
 
+def test_explicit_tempest_modules_do_not_use_package_discovery(context, monkeypatch):
+    from regress_stack.cli import test as test_cli
+
+    order = Mock(return_value=[])
+    monkeypatch.setattr(test_cli, "get_execution_order", order)
+    test_cli.tempest_modules()
+    assert order.call_args.kwargs == {"filter_missing": True}
+    with activate(context, bootstrap_only=False):
+        test_cli.tempest_modules()
+    assert order.call_args.kwargs == {"filter_missing": False}
+
+
 def test_runtime_resources_can_be_created_on_surviving_controller(peer):
     with activate(peer):
         assert not topology.owns_shared_state()

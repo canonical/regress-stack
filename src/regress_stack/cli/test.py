@@ -10,6 +10,7 @@ import subprocess
 
 import regress_stack.modules
 from regress_stack.core import utils
+from regress_stack.core import deployment
 from regress_stack.core.deployment import private_write
 from regress_stack.core.modules import get_execution_order
 from regress_stack.modules import keystone
@@ -60,6 +61,15 @@ def test(concurrency, retry_failed, state):
     with quiet_context(context, bootstrap_only=False):
         # Legacy log collection prints unfiltered service logs.
         run_tempest(concurrency, retry_failed, collect_failure_logs=False)
+
+
+def tempest_modules():
+    """Modules whose Tempest configuration and test selection apply here."""
+    # Explicit roles do not install every legacy package of a module; for
+    # example, control-profile controllers have no nova-compute. Their setup
+    # markers already record which modules this node configured.
+    explicit = deployment.current() is not None
+    return get_execution_order(regress_stack.modules, filter_missing=not explicit)
 
 
 def run_tempest(concurrency, retry_failed, collect_failure_logs: bool) -> None:
@@ -124,7 +134,7 @@ def run_tempest(concurrency, retry_failed, collect_failure_logs: bool) -> None:
     )
 
     test_regexes = []
-    for mod in get_execution_order(regress_stack.modules):
+    for mod in tempest_modules():
         if not utils.is_setup_done(mod.name):
             LOG.info("Skipping %s", mod.name)
             continue
