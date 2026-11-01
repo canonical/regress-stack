@@ -17,8 +17,9 @@ LOGS = ["/var/log/heat/"]
 
 CONF = "/etc/heat/heat.conf"
 URL = f"http://{core_utils.my_ip()}:8004"
-URL_CFN = URL + "/v1"
-URL_ORCHESTRATION = URL_CFN + "/%(tenant_id)s"
+URL_ORCHESTRATION = URL + "/v1/%(tenant_id)s"
+# heat-api-cfn listens on 8000, the same server as the metadata URL below.
+URL_CFN = f"http://{core_utils.my_ip()}:8000/v1"
 SERVICE = "heat"
 SERVICE_CFN = "heat-cfn"
 SERVICE_TYPE = "orchestration"
