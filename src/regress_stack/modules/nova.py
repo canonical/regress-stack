@@ -44,6 +44,10 @@ BASE_PACKAGES = [
     "nova-spiceproxy",
     "spice-html5",
 ]
+# The [spice] console needs QEMU's spice support. Where it is split into this
+# module package, qemu-system-x86 only recommends it, and apt drops a
+# recommend it cannot install without upgrading packages already present.
+SPICE_MODULE_PACKAGE = "qemu-system-modules-spice"
 LOG = logging.getLogger(__name__)
 
 CONF = "/etc/nova/nova.conf"
@@ -67,7 +71,11 @@ NOVA_PRIVSEP_HELPER = (
 
 
 def determine_packages(no_tempest: bool = False) -> list[str]:
-    return list(BASE_PACKAGES)
+    packages = list(BASE_PACKAGES)
+    # Releases without the module package build spice into qemu-system-x86.
+    if SPICE_MODULE_PACKAGE in core_apt.get_cache():
+        packages.append(SPICE_MODULE_PACKAGE)
+    return packages
 
 
 def setup():
