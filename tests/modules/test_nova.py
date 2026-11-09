@@ -134,3 +134,18 @@ def test_ensure_metadata_site_rewrites_stale_managed_site(tmp_path, monkeypatch)
 
     assert "WSGIDaemonProcess nova-metadata" in site_path.read_text()
     assert run_calls == []
+
+
+def test_determine_packages_adds_spice_module_when_available(monkeypatch):
+    monkeypatch.setattr(
+        nova.core_apt, "get_cache", lambda: {nova.SPICE_MODULE_PACKAGE: object()}
+    )
+    assert nova.determine_packages() == [
+        *nova.BASE_PACKAGES,
+        nova.SPICE_MODULE_PACKAGE,
+    ]
+
+
+def test_determine_packages_without_spice_module(monkeypatch):
+    monkeypatch.setattr(nova.core_apt, "get_cache", lambda: {})
+    assert nova.determine_packages() == nova.BASE_PACKAGES

@@ -47,6 +47,12 @@ prepare: |
   Pin: release o=LP-PPA-${ppa_slug}
   Pin-Priority: ${ppa_priority}
   EOF
+    # Move the image's preinstalled packages to their PPA versions. Without
+    # this the job never runs them, and apt silently drops recommends that
+    # need them, such as qemu's spice module through libx11-xcb1.
+    DEBIAN_FRONTEND=noninteractive apt-get -y \
+      -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+      upgrade
   fi
   PACKAGES="
     build-essential \
