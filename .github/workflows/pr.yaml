@@ -13,6 +13,7 @@ jobs:
         release: [jammy, noble, resolute, stonking]
         attempt: [1, 2, 3, 4, 5]
     runs-on: [self-hosted, linux, X64, xlarge, noble]
+    timeout-minutes: 20
     steps:
     - name: Checkout repository
       uses: actions/checkout@v7
