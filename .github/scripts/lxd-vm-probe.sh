@@ -7,7 +7,7 @@ set -uo pipefail
 
 image=${1:-ubuntu-daily:noble}
 plan=${2:-c14-m56}
-storage=${3:-50G}
+storage=${3:-50GiB}
 name=probe-vm
 timeout=${PROBE_TIMEOUT:-180}
 
