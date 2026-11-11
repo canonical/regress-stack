@@ -1,35 +1,59 @@
 name: Pull Request
 
+# DO NOT MERGE: runs only an LXD VM networking probe on the self-hosted
+# runners, to find out why spread VMs sometimes get no IPv4 address.
 on:
   pull_request:
 
 jobs:
-  code-quality-check:
-    runs-on: ubuntu-latest
-
+  lxd-vm-probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [jammy, noble, resolute, stonking]
+        attempt: [1, 2, 3, 4, 5]
+    runs-on: [self-hosted, linux, X64, xlarge, noble]
     steps:
     - name: Checkout repository
       uses: actions/checkout@v7
-
-    - name: Run pre-commit checks
-      uses: pre-commit/action@v3.0.1
-
-  unit-tests:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v7
-
-    - name: Install uv
-      run: sudo snap install --classic astral-uv
 
     - name: Install dependencies
       run: |
-        sudo apt update
-        sudo apt install --yes dpkg-dev libapt-pkg-dev
+        set -euxo pipefail
+        retry() {
+          local attempt
+          for attempt in 1 2 3 4; do
+            "$@" && return 0
+            echo "Attempt $attempt of $* failed" >&2
+            sleep 30
+          done
+          "$@"
+        }
+        sudo apt-get update
+        sudo apt-get install -yq snapd jq
+        sudo systemctl enable snapd
+        sudo systemctl restart snapd
+        if snap list lxd >/dev/null 2>&1; then
+          retry sudo snap refresh --channel 5.21/stable lxd
+        else
+          retry sudo snap install --channel 5.21/stable lxd
+        fi
 
-    - name: Run unit-tests
-      run: uv run py.test
+    - name: Clear FORWARD firewall rules
+      run: |
+        set -euxo pipefail
+        sudo iptables -P FORWARD ACCEPT  || true
+        sudo ip6tables -P FORWARD ACCEPT || true
+        sudo iptables -F FORWARD  || true
+        sudo ip6tables -F FORWARD || true
 
-  functional-tests:
-    uses: ./.github/workflows/functional-tests.yaml
+    - name: Configure LXD
+      run: |
+        set -euxo pipefail
+        sudo snap set lxd daemon.group=adm
+        sudo lxd init --auto
+
+    - name: Probe LXD VM networking
+      run: |
+        .github/scripts/lxd-vm-probe.sh \
+          ubuntu-daily:${{ matrix.release }} c14-m56 50G
