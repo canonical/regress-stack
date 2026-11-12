@@ -11,6 +11,7 @@ dependencies = [
     "python-apt",
     "python-openstackclient>=7.1.4",
     "click>=8.0",
+    "tenacity>=6.3.1",
 ]
 
 [dependency-groups]

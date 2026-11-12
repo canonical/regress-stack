@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 import subprocess
+import time
 
 import pytest
 
@@ -23,7 +24,7 @@ def _fake_run(failures):
 def test_download_retries_a_failed_attempt(monkeypatch):
     run, calls = _fake_run(failures=1)
     monkeypatch.setattr(magnum.core_utils, "run", run)
-    monkeypatch.setattr(magnum.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 
     magnum._download("https://example.com/image.qcow2.xz", "image.qcow2.xz", "/tmp")
 
@@ -38,7 +39,7 @@ def test_download_retries_a_failed_attempt(monkeypatch):
 def test_download_gives_up_after_the_last_attempt(monkeypatch):
     run, calls = _fake_run(failures=magnum.COREOS_DOWNLOAD_ATTEMPTS)
     monkeypatch.setattr(magnum.core_utils, "run", run)
-    monkeypatch.setattr(magnum.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 
     with pytest.raises(subprocess.CalledProcessError):
         magnum._download("https://example.com/image.qcow2.xz", "image.qcow2.xz", "/tmp")
