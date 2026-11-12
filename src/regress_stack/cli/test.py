@@ -94,6 +94,8 @@ def test(concurrency, retry_failed):
         str(tempest_conf),
         ("validation", "image_ssh_user", "ubuntu"),
         ("validation", "image_alt_ssh_user", "ubuntu"),
+        ("validation", "connect_method", "floating"),
+        ("network-feature-enabled", "port_security", "true"),
     )
 
     test_regexes = []
