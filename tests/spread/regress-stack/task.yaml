@@ -88,7 +88,7 @@ prepare: |
   apt-get -y install $PACKAGES
 
   # Install regress-stack dependencies
-  apt-get install -yq python3-pyroute2
+  apt-get install -yq python3-pyroute2 python3-tenacity
 
   # Install packages declared by all modules.
   pushd $SPREAD_PATH/src

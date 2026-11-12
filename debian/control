@@ -14,6 +14,7 @@ Build-Depends-Indep:
  python3-openstackclient,
  python3-pyroute2,
  python3-pytest,
+ python3-tenacity,
 Standards-Version: 4.6.1
 Vcs-Git: https://github.com/canonical/regress-stack
 Vcs-Browser: https://github.com/canonical/regress-stack
