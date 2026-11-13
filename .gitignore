@@ -18,3 +18,8 @@ spread.yaml
 # IDE
 .idea/
 .vscode/
+# Debian build artifacts
+debian/files
+
+# Agent
+.opencode

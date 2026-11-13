@@ -1,0 +1,136 @@
+name: Build Debian Package
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "JSON encoded list of releases."
+        required: false
+        type: string
+
+jobs:
+  metadata:
+    name: Ubuntu LTS, stable and devel releases
+    runs-on: ubuntu-latest
+    outputs:
+      releases: ${{ steps.generate-releases.outputs.releases }}
+    steps:
+      - name: Query distro-info for LTS, stable and devel releases
+        id: generate-releases
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -yq distro-info
+          releases=$(printf '%s\n' \
+            "$(ubuntu-distro-info --lts)" \
+            "$(ubuntu-distro-info --stable)" \
+            "$(ubuntu-distro-info --devel)" | sort -u | jq -R . | jq -cs)
+          echo "releases=${releases}" >> ${GITHUB_OUTPUT}
+          cat ${GITHUB_OUTPUT}
+
+  debian-build:
+    needs:
+      - metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ${{ inputs.release && fromJson(inputs.release) || fromJson(needs.metadata.outputs.releases) }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Install build tooling
+      run: |
+        #!/bin/bash
+        set -euxo pipefail
+        sudo apt-get update
+        sudo apt-get install -yq sbuild-qemu vmdb2 ubuntu-dev-tools debootstrap lintian devscripts equivs eatmydata
+
+    - name: Enable KVM access
+      run: |
+        # Make sure the kvm module is loaded so /dev/kvm exists, then grant
+        # rw access to it: on the runner image the device is root:kvm 0660
+        # and the runner user is not in the kvm group. chmod takes effect
+        # immediately (udevadm trigger is asynchronous), while the udev rule
+        # makes the permissions survive udev re-triggers caused by later
+        # package installations. Fail fast if KVM is not usable, otherwise
+        # the build falls back to slow TCG emulation.
+        sudo modprobe kvm
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        sudo chmod 666 /dev/kvm
+        ls -l /dev/kvm
+        test -w /dev/kvm
+
+    - name: Install build dependencies
+      run: |
+        set -euxo pipefail
+        sudo mk-build-deps --install --remove --tool='apt-get --yes' debian/control
+
+    - name: Create sbuild QEMU image
+      run: |
+        #!/bin/bash
+        set -euxo pipefail
+        mkdir -p ~/.cache/sbuild
+        sudo sbuild-qemu-create --components="main,universe" ${{ matrix.release }} -o ~/.cache/sbuild/${{ matrix.release }}-autopkgtest-amd64.img http://archive.ubuntu.com/ubuntu
+        # The image is created as root with restrictive permissions while
+        # sbuild runs as the build user and needs to read it.
+        sudo chown "$USER:" ~/.cache/sbuild/${{ matrix.release }}-autopkgtest-amd64.img
+
+    - name: Configure sbuild backend
+      run: |
+        # Configure the QEMU backend via ~/.sbuildrc instead of using the
+        # sbuild-qemu(1) wrapper: sbuild only expands the short
+        # --autopkgtest-virt-server name ('qemu' -> 'autopkgtest-virt-qemu')
+        # for values read from the configuration file, not from the command
+        # line, which makes the wrapper fail with 'Can\'t exec "qemu"'.
+        cat << 'EOF' > ~/.sbuildrc
+        $chroot_mode = 'autopkgtest';
+        $autopkgtest_virt_server = 'qemu';
+        $autopkgtest_virt_server_options = [
+          '--qemu-architecture=x86_64',
+          '--ram-size=2048',
+          '--cpus=2',
+          '--boot=auto',
+          "$ENV{HOME}/.cache/sbuild/%r-autopkgtest-%a.img",
+        ];
+        # The VM is disposable, no need to clean it up after the build.
+        $purge_build_deps = 'never';
+        $purge_build_directory = 'never';
+        # dose can hang inside a QEMU VM.
+        $bd_uninstallable_explainer = 'apt';
+        EOF
+
+    - name: Build source package
+      run: |
+        set -euxo pipefail
+        dpkg-buildpackage -S -us -uc -d
+
+    - name: Build binary package
+      run: |
+        set -euxo pipefail
+        # In autopkgtest chroot mode sbuild copies the build results back to
+        # BUILD_DIR on the host, which defaults to the current directory;
+        # collect them next to the source package instead.
+        sbuild --verbose --build-dir="$GITHUB_WORKSPACE/.." -A -d ${{ matrix.release }} --no-run-lintian ../regress-stack_*.dsc
+
+    - name: Run lintian
+      continue-on-error: true
+      run: |
+        set -euxo pipefail
+        lintian --info ../*.changes
+
+    - name: Collect artifacts
+      run: |
+        set -euxo pipefail
+        mkdir -p /tmp/artifacts
+        cp ../*.deb ../*.dsc ../*.changes ../*.buildinfo ../*.tar.* /tmp/artifacts/
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: debian-packages-${{ matrix.release }}-${{ github.sha }}
+        path: /tmp/artifacts/
