@@ -1,2 +1,0 @@
-# known and accepted to not be present yet https://github.com/canonical/regress-stack/issues/33
-python3-regress-stack: no-manual-page [usr/bin/regress-stack]
