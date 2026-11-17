@@ -35,7 +35,7 @@ include-package-data = true
 "regress_stack.resources" = ["*"]
 
 [tool.uv.sources]
-python-apt = { git = "https://salsa.debian.org/apt-team/python-apt.git", rev = "3.0.0ubuntu1" }
+python-apt = { git = "https://salsa.debian.org/apt-team/python-apt.git", rev = "4959613e23bacb58e8ac32b03aaad04ac4817c59" }
 
 [tool.ruff]
 extend-exclude = [
