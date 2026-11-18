@@ -70,6 +70,17 @@ jobs:
         set -euxo pipefail
         sudo mk-build-deps --install --remove --tool='apt-get --yes' debian/control
 
+    - name: Check the manpages manifest is removed on clean
+      run: |
+        # Regression test: the generated debian/python3-regress-stack.manpages
+        # must not survive "debian/rules clean", otherwise it leaks into the
+        # native source tarball built later in this job.
+        set -euxo pipefail
+        debian/rules override_dh_installman
+        test -e debian/python3-regress-stack.manpages
+        debian/rules clean
+        test ! -e debian/python3-regress-stack.manpages
+
     - name: Create sbuild QEMU image
       run: |
         #!/bin/bash
