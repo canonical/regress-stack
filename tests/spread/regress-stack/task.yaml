@@ -9,6 +9,18 @@ environment:
 
 prepare: |
   set -euxo pipefail
+  # The Jammy daily VM can boot a KVM kernel without the NFS server module.
+  if [ "$(lsb_release -sc)" = jammy ] && [ "${MANILA_BACKEND:-lvm}" = lvm ] && ! modprobe nfsd; then
+    if [ "${SPREAD_REBOOT:-0}" != 0 ]; then
+      echo "The Jammy test VM still cannot load nfsd after reboot" >&2
+      exit 1
+    fi
+    apt-get update
+    apt-get install -y --no-install-recommends linux-image-virtual
+    echo 'GRUB_FLAVOUR_ORDER="generic"' > /etc/default/grub.d/99-regress-stack-nfs.cfg
+    update-grub
+    REBOOT
+  fi
   if ! grep -q 127.0.1.1 /etc/hosts; then
     echo "127.0.1.1 $(hostname)" >> /etc/hosts
   fi
