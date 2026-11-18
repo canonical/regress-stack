@@ -99,10 +99,11 @@ def build_dependency_graph(modules_mod: types.ModuleType) -> nx.DiGraph:
         )
         # In case someone includes a dependency in both DEPENDENCIES and OPTIONAL_DEPENDENCIES
         dependencies = dependencies - optional_dependencies
-        if hasattr(module_loaded, "determine_packages"):
-            packages = module_loaded.determine_packages()
-        else:
-            packages = getattr(module_loaded, "PACKAGES", [])
+        # Modules can declare runtime packages separately from test tooling.
+        packages = getattr(module_loaded, "PACKAGES", None)
+        if packages is None:
+            determine_packages = getattr(module_loaded, "determine_packages", None)
+            packages = determine_packages() if determine_packages else []
 
         graph.add_node(mod, installed=apt.pkgs_installed(packages))
         for dep in dependencies:

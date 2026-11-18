@@ -49,6 +49,7 @@ Regress Stack currently supports the following OpenStack modules:
 - **Heat**: `heat-api`, `heat-api-cfn`, `heat-engine`
 - **Barbican**: `barbican-api`, `barbican-keystone-listener`, `barbican-worker`
 - **Keystone**: `keystone`, `apache2`, `libapache2-mod-wsgi-py3`
+- **Manila**: `manila-api`, `manila-scheduler`, `manila-share`
 - **Magnum**: `magnum-api`, `magnum-conductor`
 - **Neutron**: `neutron-server`, `neutron-ovn-metadata-agent`
 - **Nova**: `nova-api`, `nova-conductor`, `nova-scheduler`, `nova-compute`, `nova-spiceproxy`, `spice-html5`
@@ -62,10 +63,31 @@ The following modules are available on [Sunbeam](https://github.com/canonical/sn
 - **Ironic**
 - **Masakari**
 - **Octavia**
-- **Manila**
 - **AODH**
 - **Ceilometer**
 - **Gnocchi**
+
+## Standalone Manila tests
+
+Run these commands in a disposable Ubuntu VM after selecting the desired
+package source and installing the Regress Stack Python dependencies.
+
+```bash
+sudo apt install $(uv run regress-stack packages manila)
+sudo uv run regress-stack setup manila
+sudo uv run regress-stack test
+```
+
+The Manila target configures Keystone, MySQL, RabbitMQ and an LVM-backed NFS
+share service. The test command runs the usual Tempest smoke selection and
+includes Manila API tests for the standalone backend. Compute-based scenarios
+require additional OpenStack services. For security update validation, use a
+package containing the relevant fix and check the distribution package version
+and changelog.
+
+The backend creates a sparse 16 GiB image at
+`/var/lib/regress-stack/manila-volumes.img`. Rerun `setup manila` after a VM
+reboot to reattach the image.
 
 ## PPA priority in `spread` tests
 
