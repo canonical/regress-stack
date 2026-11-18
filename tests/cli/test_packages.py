@@ -129,6 +129,7 @@ def test_packages_command_watcher_without_tempest():
 
 
 def test_packages_command_manila():
+    """Manila needs only its service dependencies and omits test packages on request."""
     runner = CliRunner()
     with_tempest = runner.invoke(packages, ["manila"])
     without_tempest = runner.invoke(packages, ["--no-tempest", "manila"])

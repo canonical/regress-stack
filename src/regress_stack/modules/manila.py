@@ -17,6 +17,7 @@ PACKAGES = [
     "nfs-kernel-server",
     "curl",
 ]
+TEMPEST_PACKAGES = ["manila-tempest-plugin"]
 LOGS = ["/var/log/manila/"]
 TEST_INCLUDE_REGEXES = [
     r"manila_tempest_tests\.tests\.api\.test_(?:availability_zones|limits|microversions|rules|shares|shares_actions)\.",
@@ -33,10 +34,6 @@ ROOTWRAP_CONF = "/etc/manila/rootwrap.conf"
 API_WSGI = pathlib.Path("/usr/bin/manila-api-wsgi")
 APACHE_CONF = pathlib.Path("/etc/apache2/conf-available/regress-stack-manila.conf")
 BACKING_FILE = pathlib.Path("/var/lib/regress-stack/manila-volumes.img")
-
-
-def determine_packages(no_tempest: bool = False) -> list[str]:
-    return PACKAGES.copy() if no_tempest else [*PACKAGES, "manila-tempest-plugin"]
 
 
 def _api_url() -> str:
