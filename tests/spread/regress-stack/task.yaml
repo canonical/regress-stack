@@ -1,6 +1,7 @@
 summary: regress-stack
 
 environment:
+  MANILA_BACKEND: $(HOST:echo ${MANILA_BACKEND:-lvm})
   FEATURE_ENABLE_CEPH: $(HOST:echo ${FEATURE_ENABLE_CEPH:-false})
   TEST_INCLUDE_REGEXES: $(HOST:echo ${TEST_INCLUDE_REGEXES:-""})
   TEST_EXCLUDE_REGEXES: $(HOST:echo ${TEST_EXCLUDE_REGEXES:-""})

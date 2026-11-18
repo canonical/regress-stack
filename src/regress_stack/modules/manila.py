@@ -1,24 +1,45 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+import os
 import pathlib
+import shutil
 
 from regress_stack.core import utils as core_utils
-from regress_stack.modules import keystone, mysql, rabbitmq
+from regress_stack.modules import ceph, keystone, mysql, rabbitmq
 from regress_stack.modules import utils as module_utils
 
+BACKEND = os.environ.get("MANILA_BACKEND") or "lvm"
+CEPHFS_NFS = BACKEND == "cephfs-nfs"
 DEPENDENCIES = {keystone, mysql, rabbitmq}
+if CEPHFS_NFS:
+    DEPENDENCIES.add(ceph)
+
 PACKAGES = [
     "manila-api",
     "manila-scheduler",
     "manila-share",
     "python3-manilaclient",
-    "lvm2",
-    "nfs-kernel-server",
     "curl",
 ]
+if CEPHFS_NFS:
+    PACKAGES.extend(
+        [
+            "ceph-mds",
+            "nfs-ganesha",
+            "nfs-ganesha-ceph",
+            "nfs-common",
+            "python3-ceph-argparse",
+            "python3-rados",
+        ]
+    )
+else:
+    PACKAGES.extend(["lvm2", "nfs-kernel-server"])
+
 TEMPEST_PACKAGES = ["manila-tempest-plugin"]
 LOGS = ["/var/log/manila/"]
+if CEPHFS_NFS:
+    LOGS.append("/var/log/ganesha/")
 TEST_INCLUDE_REGEXES = [
     r"manila_tempest_tests\.tests\.api\.test_(?:availability_zones|limits|microversions|rules|shares|shares_actions)\.",
 ]
@@ -26,9 +47,13 @@ TEST_INCLUDE_REGEXES = [
 SERVICE = "manila"
 SERVICE_TYPE = "sharev2"
 CONF = "/etc/manila/manila.conf"
-BACKEND = "regress-lvm"
+SHARE_TYPE = f"regress-{BACKEND}"
 VOLUME_GROUP = "regress-stack-manila"
-SHARE_TYPE = "regress-lvm"
+FILESYSTEM = "regress-manila"
+GANESHA_POOL = "regress-manila-ganesha"
+GANESHA_INDEX = "ganesha-export-index"
+GANESHA_CONF = pathlib.Path("/etc/ganesha/ganesha.conf")
+GANESHA_EXPORTS = pathlib.Path("/var/lib/manila/ganesha-exports")
 LOCK_PATH = "/var/lib/manila/lock"
 ROOTWRAP_CONF = "/etc/manila/rootwrap.conf"
 API_WSGI = pathlib.Path("/usr/bin/manila-api-wsgi")
@@ -70,8 +95,83 @@ def _ensure_volume_group() -> None:
     core_utils.run("vgchange", ["-ay", VOLUME_GROUP])
 
 
-def setup():
+def _configure_cephfs_nfs() -> dict[str, str]:
+    # Add a fourth OSD because parallel Tempest tests can reserve more than
+    # the default 6 GiB. OSD_COUNT is the next index after the base OSDs.
+    ceph.ensure_osd(i=ceph.OSD_COUNT, size_gb=8)
+    ceph.ensure_filesystem(FILESYSTEM)
+    core_utils.run("ceph", ["mgr", "module", "enable", "volumes"])
+    ceph.ensure_pool(GANESHA_POOL)
+    core_utils.run(
+        "ceph", ["osd", "pool", "application", "enable", GANESHA_POOL, "nfs"]
+    )
+    objects = core_utils.run("rados", ["-p", GANESHA_POOL, "ls"]).splitlines()
+    if GANESHA_INDEX not in objects:
+        core_utils.run("rados", ["-p", GANESHA_POOL, "put", GANESHA_INDEX, "/dev/null"])
+    keyring = pathlib.Path(f"/etc/ceph/{ceph.CLUSTER}.client.manila.keyring")
+    core_utils.run(
+        "ceph",
+        [
+            "auth",
+            "get-or-create",
+            "client.manila",
+            "-o",
+            str(keyring),
+            "mon",
+            "allow r",
+            "mgr",
+            "allow rw",
+            "osd",
+            f"allow rw pool={GANESHA_POOL}",
+        ],
+    )
+    shutil.chown(keyring, user=SERVICE)
+    keyring.chmod(0o600)
+
+    GANESHA_EXPORTS.mkdir(parents=True, exist_ok=True)
+    GANESHA_CONF.write_text(
+        "NFS_CORE_PARAM { Protocols = 4; Enable_NLM = false; Enable_RQUOTA = false; }\n"
+        f'RADOS_URLS {{ ceph_conf = "{ceph.CONF}"; userid = "{SERVICE}"; }}\n'
+        f'%url "rados://{GANESHA_POOL}/{GANESHA_INDEX}"\n'
+    )
+    if core_utils.has_service("nfs-server"):
+        core_utils.run("systemctl", ["disable", "--now", "nfs-server"])
+    core_utils.restart_service("nfs-ganesha")
+    core_utils.enable_service("nfs-ganesha")
+
+    return {
+        "share_driver": "manila.share.drivers.cephfs.driver.CephFSDriver",
+        "cephfs_conf_path": ceph.CONF,
+        "cephfs_auth_id": SERVICE,
+        "cephfs_cluster_name": ceph.CLUSTER,
+        "cephfs_filesystem_name": FILESYSTEM,
+        "cephfs_protocol_helper_type": "NFS",
+        "cephfs_ganesha_server_is_remote": "False",
+        "cephfs_ganesha_server_ip": core_utils.my_ip(),
+        "ganesha_config_path": str(GANESHA_CONF),
+        "ganesha_export_dir": str(GANESHA_EXPORTS),
+        "ganesha_rados_store_enable": "True",
+        "ganesha_rados_store_pool_name": GANESHA_POOL,
+        "ganesha_rados_export_index": GANESHA_INDEX,
+    }
+
+
+def _configure_lvm() -> dict[str, str]:
     _ensure_volume_group()
+    return {
+        "share_driver": "manila.share.drivers.lvm.LVMShareDriver",
+        "lvm_share_volume_group": VOLUME_GROUP,
+        "lvm_share_export_ips": core_utils.my_ip(),
+        "lvm_share_helpers": "NFS=manila.share.drivers.helpers.NFSHelper",
+    }
+
+
+def setup():
+    if BACKEND not in {"lvm", "cephfs-nfs"}:
+        raise ValueError(
+            f"Unsupported MANILA_BACKEND {BACKEND!r}; use lvm or cephfs-nfs"
+        )
+    backend_settings = _configure_cephfs_nfs() if CEPHFS_NFS else _configure_lvm()
     db_user, db_pass = mysql.ensure_service(SERVICE)
     rabbit_user, rabbit_pass = rabbitmq.ensure_service(SERVICE)
     username, password = keystone.ensure_service_account(
@@ -83,7 +183,7 @@ def setup():
         ("database", "connection", mysql.connection_string(SERVICE, db_user, db_pass)),
         ("DEFAULT", "transport_url", rabbitmq.transport_url(rabbit_user, rabbit_pass)),
         ("DEFAULT", "auth_strategy", "keystone"),
-        ("DEFAULT", "enabled_share_backends", BACKEND),
+        ("DEFAULT", "enabled_share_backends", SHARE_TYPE),
         ("DEFAULT", "enabled_share_protocols", "NFS"),
         ("DEFAULT", "default_share_type", SHARE_TYPE),
         ("DEFAULT", "osapi_share_workers", "1"),
@@ -98,19 +198,29 @@ def setup():
             "keystone_authtoken", keystone.authtoken_service(username, password)
         ),
         *module_utils.dict_to_cfg_set_args(
-            BACKEND,
+            SHARE_TYPE,
             {
-                "share_backend_name": BACKEND,
-                "share_driver": "manila.share.drivers.lvm.LVMShareDriver",
+                "share_backend_name": SHARE_TYPE,
                 "driver_handles_share_servers": "False",
-                "lvm_share_volume_group": VOLUME_GROUP,
-                "lvm_share_export_ips": core_utils.my_ip(),
-                "lvm_share_helpers": "NFS=manila.share.drivers.helpers.NFSHelper",
+                **backend_settings,
             },
         ),
     )
+    if CEPHFS_NFS:
+        # The scheduler decrements its free-space estimate on each share
+        # request. Refresh it promptly on the small test Ceph cluster.
+        module_utils.cfg_set(
+            CONF,
+            ("DEFAULT", "periodic_interval", "2"),
+            ("DEFAULT", "periodic_fuzzy_delay", "0"),
+        )
+
     core_utils.sudo("manila-manage", ["db", "sync"], SERVICE)
-    core_utils.restart_service("nfs-kernel-server")
+    if not CEPHFS_NFS:
+        if core_utils.has_service("nfs-ganesha"):
+            core_utils.run("systemctl", ["disable", "--now", "nfs-ganesha"])
+            core_utils.enable_service("nfs-server")
+        core_utils.restart_service("nfs-kernel-server")
     core_utils.restart_service("manila-scheduler", "manila-share")
     _start_api()
     _ensure_share_type()
@@ -177,7 +287,7 @@ def _ensure_share_type() -> None:
                 SHARE_TYPE,
                 "false",
                 "--extra-specs",
-                f"share_backend_name={BACKEND}",
+                f"share_backend_name={SHARE_TYPE}",
             ],
             env=env,
         )
@@ -191,7 +301,8 @@ def configure_tempest(tempest_conf: pathlib.Path):
         ("share", "multitenancy_enabled", "False"),
         ("share", "enable_protocols", "nfs"),
         ("share", "enable_ip_rules_for_protocols", "nfs"),
-        ("share", "run_shrink_tests", "False"),
+        # The LVM driver implements extend_share but does not implement shrink_share.
+        ("share", "run_shrink_tests", str(CEPHFS_NFS)),
         ("share", "run_share_group_tests", "False"),
         ("share", "default_share_type_name", SHARE_TYPE),
     )

@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 import functools
+import json
 import logging
 import shutil
+import time
 import typing
 import uuid
 from pathlib import Path
@@ -33,6 +35,7 @@ MGR_SETUP_DONE = MGR_DATA_FOLDER / "done"
 OSD_DATA_PATH = Path("/var/lib/ceph/osd")
 RBD_UUID = Path("/etc/ceph/rbd_secret_uuid")
 
+OSD_COUNT = 3
 OSD_SIZE_GB = 2
 
 
@@ -71,8 +74,8 @@ def setup():
     import_keyrings()
     setup_mon()
     setup_mgr()
-    for i in range(3):
-        core_utils.exists_cache(OSD_DATA_PATH / f"ceph-{i}" / "done")(setup_osd)(i)
+    for i in range(OSD_COUNT):
+        ensure_osd(i)
 
 
 @functools.lru_cache
@@ -272,7 +275,12 @@ def setup_mgr():
     return MGR_SETUP_DONE
 
 
-def setup_osd(i: int) -> Path:
+def ensure_osd(i: int, size_gb: int = OSD_SIZE_GB) -> None:
+    done = OSD_DATA_PATH / f"ceph-{i}" / "done"
+    core_utils.exists_cache(done)(setup_osd)(i, size_gb)
+
+
+def setup_osd(i: int, size_gb: int = OSD_SIZE_GB) -> Path:
     osd_dir = OSD_DATA_PATH / f"ceph-{i}"
     osd_dir.mkdir(parents=True, exist_ok=True)
     shutil.chown(osd_dir, "ceph", "ceph")
@@ -280,7 +288,7 @@ def setup_osd(i: int) -> Path:
     backing_file = osd_dir / "backing.img"
     core_utils.run(
         "fallocate",
-        ["--length", f"{OSD_SIZE_GB}G", str(backing_file)],
+        ["--length", f"{size_gb}G", str(backing_file)],
     )
     shutil.chown(backing_file, user="ceph", group="ceph")
 
@@ -335,6 +343,49 @@ def ensure_pool(name: str) -> str:
             return name
     core_utils.run("ceph", ["osd", "pool", "create", name, "32"])
     return name
+
+
+def ensure_filesystem(name: str) -> None:
+    filesystems = json.loads(core_utils.run("ceph", ["fs", "ls", "-f", "json"]))
+    if not any(fs["name"] == name for fs in filesystems):
+        metadata = ensure_pool(f"{name}-metadata")
+        data = ensure_pool(f"{name}-data")
+        core_utils.run("ceph", ["fs", "new", name, metadata, data])
+
+    daemon = f"{name}.{core_utils.fqdn()}"
+    directory = Path(f"/var/lib/ceph/mds/{CLUSTER}-{daemon}")
+    directory.mkdir(parents=True, exist_ok=True)
+    shutil.chown(directory, user="ceph", group="ceph")
+    keyring = directory / "keyring"
+    core_utils.run(
+        "ceph",
+        [
+            "auth",
+            "get-or-create",
+            f"mds.{daemon}",
+            "-o",
+            str(keyring),
+            "mon",
+            "profile mds",
+            "osd",
+            "allow rwx",
+            "mds",
+            "allow",
+        ],
+    )
+    shutil.chown(keyring, user="ceph", group="ceph")
+    keyring.chmod(0o600)
+    core_utils.run("ceph", ["config", "set", f"mds.{daemon}", "mds_join_fs", name])
+    core_utils.run("systemctl", ["enable", "--now", f"ceph-mds@{daemon}"])
+
+    for _ in range(30):
+        status = json.loads(
+            core_utils.run("ceph", ["fs", "status", name, "-f", "json"])
+        )
+        if any(mds["state"] == "active" for mds in status["mdsmap"]):
+            return
+        time.sleep(2)
+    raise RuntimeError(f"CephFS {name!r} has no active metadata server")
 
 
 def ensure_authenticate(pool: str, user: typing.Optional[str] = None) -> Path:

@@ -49,7 +49,9 @@ Regress Stack currently supports the following OpenStack modules:
 - **Heat**: `heat-api`, `heat-api-cfn`, `heat-engine`
 - **Barbican**: `barbican-api`, `barbican-keystone-listener`, `barbican-worker`
 - **Keystone**: `keystone`, `apache2`, `libapache2-mod-wsgi-py3`
-- **Manila**: `manila-api`, `manila-scheduler`, `manila-share`
+- **Manila**: `manila-api`, `manila-scheduler`, `manila-share`. Defaults to LVM
+  with kernel NFS. Set `MANILA_BACKEND=cephfs-nfs` for the `packages`, `setup`,
+  and `test` commands to use CephFS with standalone NFS-Ganesha in a test VM.
 - **Magnum**: `magnum-api`, `magnum-conductor`
 - **Neutron**: `neutron-server`, `neutron-ovn-metadata-agent`
 - **Nova**: `nova-api`, `nova-conductor`, `nova-scheduler`, `nova-compute`, `nova-spiceproxy`, `spice-html5`
