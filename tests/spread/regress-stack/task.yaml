@@ -10,7 +10,13 @@ environment:
 
 prepare: |
   set -euxo pipefail
-  # The Jammy daily VM can boot a KVM kernel without the NFS server module.
+  # Workaround for intermittent archive/PPA HTTP 503 responses during downloads.
+  # Retrying lets transient service failures recover while preserving the
+  # selected package source. Exhausted retries still fail preparation.
+  echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-regress-stack-retries
+  # Workaround for Jammy daily VMs booting a KVM kernel without nfsd.
+  # The virtual kernel package provides a generic kernel with NFS server
+  # support. Prefer that kernel and reboot before configuring Manila LVM.
   if [ "$(lsb_release -sc)" = jammy ] && [ "${MANILA_BACKEND:-lvm}" = lvm ] && ! modprobe nfsd; then
     if [ "${SPREAD_REBOOT:-0}" != 0 ]; then
       echo "The Jammy test VM still cannot load nfsd after reboot" >&2
@@ -50,7 +56,17 @@ prepare: |
       echo "APT_PPA_PRIORITY must be an integer: $ppa_priority" >&2
       exit 1
     fi
-    add-apt-repository -y "$APT_ENABLE_PPA"
+    # Workaround for Launchpad API HTTP 503 responses in add-apt-repository.
+    # Acquire::Retries covers apt downloads, so retry repository discovery here.
+    for attempt in 1 2 3; do
+      if add-apt-repository -y "$APT_ENABLE_PPA"; then
+        break
+      fi
+      if [ "$attempt" = 3 ]; then
+        exit 1
+      fi
+      sleep 5
+    done
     # Launchpad omits the archive name from the origin for the default "ppa".
     ppa_slug=${APT_ENABLE_PPA#ppa:}
     ppa_slug=${ppa_slug%/ppa}
@@ -134,6 +150,46 @@ prepare: |
   fi
   apt-get -f install
   popd
+
+  # Workaround for uutils dd failing direct reads from LVM snapshots with EINVAL.
+  # GNU dd completes the same copy, preserving share-from-snapshot coverage.
+  # Limit the command override to the disposable Resolute LVM test VM.
+  # https://bugs.launchpad.net/ubuntu/+source/rust-coreutils/+bug/2168495
+  if [ "$(lsb_release -sc)" = resolute ] && [ "$MANILA_BACKEND" = lvm ] && dd --version | grep -q uutils; then
+    apt-get install -y gnu-coreutils
+    ln -sfn /usr/bin/gnudd /usr/local/bin/dd
+  fi
+
+  # Workaround for Resolute Ganesha SIGSEGV during CephFS AddExport.
+  # The affected Ubuntu Ceph patch logs through a null global context.
+  # Preload its initializer for the known affected library versions. Remove
+  # the service override when the installed package version changes.
+  # https://bugs.launchpad.net/ubuntu/+source/ceph/+bug/2157583
+  if [ "$(lsb_release -sc)" = resolute ] && [ "$MANILA_BACKEND" = cephfs-nfs ]; then
+    cephfs_version=$(dpkg-query -W -f='${Version}' libcephfs2)
+    # Include only the confirmed affected revisions, not older unverified builds.
+    if dpkg --compare-versions "$cephfs_version" ge 20.2.0-0ubuntu2 && \
+       dpkg --compare-versions "$cephfs_version" le 20.2.0-0ubuntu2.1; then
+      install -d /usr/local/lib/regress-stack /etc/systemd/system/nfs-ganesha.service.d
+      cc -Wall -Wextra -Werror -shared -fPIC "$SPREAD_PATH/files/ceph-client-context.c" \
+        -o /usr/local/lib/regress-stack/ceph-client-context.so -ldl
+      cat <<EOF > /etc/systemd/system/nfs-ganesha.service.d/regress-stack-context.conf
+  [Service]
+  Environment=LD_PRELOAD=/usr/local/lib/regress-stack/ceph-client-context.so
+  EOF
+    else
+      rm -f /etc/systemd/system/nfs-ganesha.service.d/regress-stack-context.conf
+    fi
+    systemctl daemon-reload
+  fi
+
+  # Workaround for Noble's old Manila plugin calling assertDictContainsSubset,
+  # which Python 3.12 removed. Apply the upstream assertion replacement in the
+  # apt test VM so metadata filtering coverage stays enabled.
+  # https://opendev.org/openstack/manila-tempest-plugin/commit/c1f3f37990840be797927c826fc638a661ebb5f6
+  if [ "$(lsb_release -sc)" = noble ] && [ "${TEMPEST_SOURCE:-apt}" = apt ]; then
+    python3 "$SPREAD_PATH/files/manila-tempest-compat.py"
+  fi
 
   output=$(realpath ./prepare-output.txt)
 

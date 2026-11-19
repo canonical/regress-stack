@@ -37,6 +37,7 @@ RBD_UUID = Path("/etc/ceph/rbd_secret_uuid")
 
 OSD_COUNT = 3
 OSD_SIZE_GB = 2
+MDS_START_TIMEOUT = 300
 
 
 def installed() -> bool:
@@ -378,14 +379,21 @@ def ensure_filesystem(name: str) -> None:
     core_utils.run("ceph", ["config", "set", f"mds.{daemon}", "mds_join_fs", name])
     core_utils.run("systemctl", ["enable", "--now", f"ceph-mds@{daemon}"])
 
-    for _ in range(30):
+    # Workaround for slow CephFS initialization while new loop-backed OSDs
+    # are peering and servicing the initial metadata writes in nested CI VMs.
+    deadline = time.monotonic() + MDS_START_TIMEOUT
+    while True:
         status = json.loads(
             core_utils.run("ceph", ["fs", "status", name, "-f", "json"])
         )
         if any(mds["state"] == "active" for mds in status["mdsmap"]):
             return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"CephFS {name!r} has no active metadata server after "
+                f"{MDS_START_TIMEOUT} seconds; last MDS state: {status['mdsmap']!r}"
+            )
         time.sleep(2)
-    raise RuntimeError(f"CephFS {name!r} has no active metadata server")
 
 
 def ensure_authenticate(pool: str, user: typing.Optional[str] = None) -> Path:
