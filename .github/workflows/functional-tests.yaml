@@ -80,13 +80,22 @@ jobs:
         ppa:
           - ""
           - "${{ inputs.ppa || 'ppa:ubuntu-security-proposed/ppa' }}"
+        manila_nfs_mode:
+          - cluster
         ceph:
           - ""
           - ceph
         exclude:
           - proposed: proposed
             ppa: "${{ inputs.ppa || 'ppa:ubuntu-security-proposed/ppa' }}"
+        # Retain one distro-packaged Ganesha job when Noble is selected.
+        include: >-
+          ${{ contains(fromJson(inputs.release || needs.metadata.outputs.releases), 'noble')
+              && fromJson('[{"release":"noble","proposed":"","ppa":"","ceph":"ceph","manila_nfs_mode":"standalone"}]')
+              || fromJson('[]') }}
     env:
+      # Yoga in Jammy predates NFSClusterProtocolHelper (introduced in Zed).
+      MANILA_CEPHFS_NFS_MODE: "${{ matrix.release == 'jammy' && 'standalone' || matrix.manila_nfs_mode }}"
       TEMPEST_CHANNEL: "${{ inputs.tempest_channel }}"
       TEMPEST_SOURCE: "${{ inputs.tempest_source }}"
       TEST_EXCLUDE_REGEXES: "${{ inputs.test_exclude_regexes }}"
@@ -164,6 +173,9 @@ jobs:
         fi
         if [ -n "${{ matrix.ceph }}" ]; then
           artifact_name+=-ceph
+          if [ "$MANILA_CEPHFS_NFS_MODE" = standalone ]; then
+            artifact_name+=-standalone
+          fi
         fi
         echo "artifact_name=${artifact_name}" >> $GITHUB_OUTPUT
 
@@ -173,6 +185,9 @@ jobs:
         APT_PPAS="${{ matrix.ppa }}"
         export APT_PPAS=${APT_PPAS:-false}
         export FEATURE_ENABLE_CEPH="${{ matrix.ceph }}"
+        if [ -n "$FEATURE_ENABLE_CEPH" ]; then
+          export MANILA_BACKEND=cephfs-nfs
+        fi
         # Running in a VM with 16 cores and 64GiB of memory, leaving 2 cores and
         # 8GiB of ram to the host. The VM launched by spread will be L2 guest,
         # hence the need to assign a lot of resources.

@@ -2,8 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 import functools
+import json
 import logging
+import re
 import shutil
+import socket
+import time
 import typing
 import uuid
 from pathlib import Path
@@ -33,7 +37,9 @@ MGR_SETUP_DONE = MGR_DATA_FOLDER / "done"
 OSD_DATA_PATH = Path("/var/lib/ceph/osd")
 RBD_UUID = Path("/etc/ceph/rbd_secret_uuid")
 
+OSD_COUNT = 3
 OSD_SIZE_GB = 2
+MDS_START_TIMEOUT = 300
 
 
 def installed() -> bool:
@@ -71,8 +77,8 @@ def setup():
     import_keyrings()
     setup_mon()
     setup_mgr()
-    for i in range(3):
-        core_utils.exists_cache(OSD_DATA_PATH / f"ceph-{i}" / "done")(setup_osd)(i)
+    for i in range(OSD_COUNT):
+        ensure_osd(i)
 
 
 @functools.lru_cache
@@ -107,8 +113,12 @@ def setup_mon_keyring() -> Path:
     return MON_KEYRING
 
 
-@core_utils.exists_cache(MGR_KEYRING)
 def setup_mgr_keyring() -> Path:
+    managed_keyring = _managed_mgr_folder() / "keyring"
+    if managed_keyring.exists():
+        return managed_keyring
+    if MGR_KEYRING.exists():
+        return MGR_KEYRING
     core_utils.run(
         "ceph-authtool",
         [
@@ -235,8 +245,9 @@ def monmap() -> Path:
 def ensure_ceph_folders():
     MON_DATA_FOLDER.mkdir(parents=True, exist_ok=True)
     shutil.chown(MON_DATA_FOLDER, user="ceph", group="ceph")
-    MGR_DATA_FOLDER.mkdir(parents=True, exist_ok=True)
-    shutil.chown(MGR_DATA_FOLDER, user="ceph", group="ceph")
+    if not _managed_mgr_folder().exists():
+        MGR_DATA_FOLDER.mkdir(parents=True, exist_ok=True)
+        shutil.chown(MGR_DATA_FOLDER, user="ceph", group="ceph")
 
 
 @core_utils.exists_cache(MON_SETUP_DONE)
@@ -263,8 +274,12 @@ def setup_mon():
     return MON_SETUP_DONE
 
 
-@core_utils.exists_cache(MGR_SETUP_DONE)
 def setup_mgr():
+    managed = _managed_mgr_folder()
+    if managed.exists():
+        return managed / "done"
+    if MGR_SETUP_DONE.exists():
+        return MGR_SETUP_DONE
     unit = f"ceph-mgr@{core_utils.fqdn()}"
     core_utils.restart_service(unit)
     core_utils.enable_service(unit)
@@ -272,7 +287,12 @@ def setup_mgr():
     return MGR_SETUP_DONE
 
 
-def setup_osd(i: int) -> Path:
+def ensure_osd(i: int, size_gb: int = OSD_SIZE_GB) -> None:
+    done = OSD_DATA_PATH / f"ceph-{i}" / "done"
+    core_utils.exists_cache(done)(setup_osd)(i, size_gb)
+
+
+def setup_osd(i: int, size_gb: int = OSD_SIZE_GB) -> Path:
     osd_dir = OSD_DATA_PATH / f"ceph-{i}"
     osd_dir.mkdir(parents=True, exist_ok=True)
     shutil.chown(osd_dir, "ceph", "ceph")
@@ -280,7 +300,7 @@ def setup_osd(i: int) -> Path:
     backing_file = osd_dir / "backing.img"
     core_utils.run(
         "fallocate",
-        ["--length", f"{OSD_SIZE_GB}G", str(backing_file)],
+        ["--length", f"{size_gb}G", str(backing_file)],
     )
     shutil.chown(backing_file, user="ceph", group="ceph")
 
@@ -337,6 +357,56 @@ def ensure_pool(name: str) -> str:
     return name
 
 
+def ensure_filesystem(name: str) -> None:
+    filesystems = json.loads(core_utils.run("ceph", ["fs", "ls", "-f", "json"]))
+    if not any(fs["name"] == name for fs in filesystems):
+        metadata = ensure_pool(f"{name}-metadata")
+        data = ensure_pool(f"{name}-data")
+        core_utils.run("ceph", ["fs", "new", name, metadata, data])
+
+    daemon = f"{name}.{core_utils.fqdn()}"
+    directory = Path(f"/var/lib/ceph/mds/{CLUSTER}-{daemon}")
+    directory.mkdir(parents=True, exist_ok=True)
+    shutil.chown(directory, user="ceph", group="ceph")
+    keyring = directory / "keyring"
+    core_utils.run(
+        "ceph",
+        [
+            "auth",
+            "get-or-create",
+            f"mds.{daemon}",
+            "-o",
+            str(keyring),
+            "mon",
+            "profile mds",
+            "osd",
+            "allow rwx",
+            "mds",
+            "allow",
+        ],
+    )
+    shutil.chown(keyring, user="ceph", group="ceph")
+    keyring.chmod(0o600)
+    core_utils.run("ceph", ["config", "set", f"mds.{daemon}", "mds_join_fs", name])
+    core_utils.run("systemctl", ["enable", "--now", f"ceph-mds@{daemon}"])
+
+    # Workaround for slow CephFS initialization while new loop-backed OSDs
+    # are peering and servicing the initial metadata writes in nested CI VMs.
+    deadline = time.monotonic() + MDS_START_TIMEOUT
+    while True:
+        status = json.loads(
+            core_utils.run("ceph", ["fs", "status", name, "-f", "json"])
+        )
+        if any(mds["state"] == "active" for mds in status["mdsmap"]):
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"CephFS {name!r} has no active metadata server after "
+                f"{MDS_START_TIMEOUT} seconds; last MDS state: {status['mdsmap']!r}"
+            )
+        time.sleep(2)
+
+
 def ensure_authenticate(pool: str, user: typing.Optional[str] = None) -> Path:
     keyring = Path(f"/etc/ceph/ceph.client.{pool}.keyring")
     if keyring.exists():
@@ -378,3 +448,93 @@ def rbd_uuid() -> str:
     uuid_str = str(uuid.uuid4())
     RBD_UUID.write_text(uuid_str)
     return uuid_str
+
+
+def _managed_mgr_folder() -> Path:
+    return Path("/var/lib/ceph") / ceph_uuid() / f"mgr.{core_utils.fqdn()}"
+
+
+def ensure_nfs_cluster(name: str) -> None:
+    """Deploy Ceph-managed Ganesha using an upstream Manager and NFS image.
+
+    MON, MDS and OSD daemons retain the installed Ubuntu packages. cephadm
+    connects over SSH to this test VM to deploy the single NFS daemon.
+    """
+    version = core_utils.run("ceph", ["version"]).strip()
+    match = re.match(r"ceph version ([0-9]+)\.[0-9]+\.[0-9]+(?:\s|[-+~]|$)", version)
+    if match is None:
+        raise RuntimeError(f"Cannot determine the Ceph image release from: {version!r}")
+    image = f"quay.io/ceph/ceph:v{match.group(1)}"
+    if not _managed_mgr_folder().exists():
+        # Workaround for packaged Managers unable to load cephadm's PyO3
+        # dependencies in Python subinterpreters (LP #2150762). Adopt only
+        # the Manager into the upstream image; keep the storage daemons.
+        # https://bugs.launchpad.net/ubuntu/+source/ceph/+bug/2150762
+        core_utils.run(
+            "cephadm",
+            [
+                "--image",
+                image,
+                "adopt",
+                "--style",
+                "legacy",
+                "--name",
+                f"mgr.{core_utils.fqdn()}",
+            ],
+        )
+    # Adoption starts systemd asynchronously. Wait for the container's Manager
+    # to register before querying its modules; the MON can still report the
+    # retired package Manager briefly after its unit has stopped.
+    deadline = time.monotonic() + 120
+    while True:
+        metadata = json.loads(core_utils.run("ceph", ["mgr", "metadata", "-f", "json"]))
+        if any(
+            m.get("name") == core_utils.fqdn() and m.get("container_image")
+            for m in metadata
+        ):
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("The upstream Ceph Manager did not become ready")
+        time.sleep(2)
+    core_utils.run("ceph", ["mgr", "module", "enable", "cephadm"])
+    core_utils.run("ceph", ["orch", "set", "backend", "cephadm"])
+    core_utils.run("ceph", ["mgr", "module", "enable", "nfs"])
+    core_utils.run("ceph", ["config", "set", "global", "container_image", image])
+    core_utils.run("ceph", ["cephadm", "generate-key"])
+    public_key = core_utils.run("ceph", ["cephadm", "get-pub-key"]).strip()
+    authorized_keys = Path("/root/.ssh/authorized_keys")
+    authorized_keys.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    existing = authorized_keys.read_text() if authorized_keys.exists() else ""
+    if public_key not in existing.splitlines():
+        separator = "\n" if existing and not existing.endswith("\n") else ""
+        authorized_keys.write_text(existing + separator + public_key + "\n")
+    authorized_keys.chmod(0o600)
+    core_utils.enable_service("ssh")
+    core_utils.restart_service("ssh")
+    # cephadm checks the kernel hostname, which can differ from fqdn().
+    hostname = socket.gethostname()
+    core_utils.run("ceph", ["orch", "host", "add", hostname, core_utils.my_ip()])
+    output = core_utils.run("ceph", ["nfs", "cluster", "ls", "-f", "json"]).strip()
+    # Quincy returns newline-separated IDs even with --format=json.
+    clusters = json.loads(output) if output.startswith("[") else output.splitlines()
+    if name not in clusters:
+        core_utils.run("ceph", ["nfs", "cluster", "create", name, hostname])
+
+    deadline = time.monotonic() + 600
+    while True:
+        daemons = json.loads(
+            core_utils.run(
+                "ceph",
+                ["orch", "ps", "--daemon_type", "nfs", "--refresh", "-f", "json"],
+            )
+        )
+        ours = [d for d in daemons if d["daemon_name"].startswith(f"nfs.{name}.")]
+        if ours and all(d.get("status_desc") == "running" for d in ours):
+            info = json.loads(
+                core_utils.run("ceph", ["nfs", "cluster", "info", name, "-f", "json"])
+            )
+            if info.get(name, {}).get("backend"):
+                return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"Ceph NFS cluster {name!r} is not ready: {ours!r}")
+        time.sleep(5)

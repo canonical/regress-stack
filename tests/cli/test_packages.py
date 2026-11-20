@@ -126,3 +126,30 @@ def test_packages_command_watcher_without_tempest():
     assert "watcher-api" in output_packages
     assert "python3-watcherclient" in output_packages
     assert "watcher-tempest-plugin" not in output_packages
+
+
+def test_packages_command_manila():
+    """Manila needs only its service dependencies and omits test packages on request."""
+    runner = CliRunner()
+    with_tempest = runner.invoke(packages, ["manila"])
+    without_tempest = runner.invoke(packages, ["--no-tempest", "manila"])
+
+    assert with_tempest.exit_code == without_tempest.exit_code == 0
+    runtime_packages = set(without_tempest.output.split())
+    assert {
+        "manila-api",
+        "manila-scheduler",
+        "manila-share",
+        "python3-manilaclient",
+        "keystone",
+        "mysql-server",
+        "rabbitmq-server",
+        "lvm2",
+        "nfs-kernel-server",
+    } <= runtime_packages
+    assert {"nova-api", "neutron-server", "cinder-volume"}.isdisjoint(runtime_packages)
+    assert set(with_tempest.output.split()) - runtime_packages == {
+        "tempest",
+        "manila-tempest-plugin",
+    }
+    assert "manila-tempest-plugin" not in runtime_packages

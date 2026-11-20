@@ -41,6 +41,12 @@ def packages(target=None, no_tempest=False):
             else:
                 packages_list = getattr(module_comp.module, "PACKAGES", [])
 
+                if not no_tempest:
+                    packages_list = [
+                        *packages_list,
+                        *getattr(module_comp.module, "TEMPEST_PACKAGES", []),
+                    ]
+
             all_packages.extend(packages_list)
 
         # Remove duplicates while preserving order
