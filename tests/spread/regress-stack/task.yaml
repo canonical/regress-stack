@@ -2,6 +2,7 @@ summary: regress-stack
 
 environment:
   MANILA_BACKEND: $(HOST:echo ${MANILA_BACKEND:-lvm})
+  MANILA_CEPHFS_NFS_MODE: $(HOST:echo ${MANILA_CEPHFS_NFS_MODE:-cluster})
   FEATURE_ENABLE_CEPH: $(HOST:echo ${FEATURE_ENABLE_CEPH:-false})
   TEST_INCLUDE_REGEXES: $(HOST:echo ${TEST_INCLUDE_REGEXES:-""})
   TEST_EXCLUDE_REGEXES: $(HOST:echo ${TEST_EXCLUDE_REGEXES:-""})
@@ -165,7 +166,7 @@ prepare: |
   # Preload its initializer for the known affected library versions. Remove
   # the service override when the installed package version changes.
   # https://bugs.launchpad.net/ubuntu/+source/ceph/+bug/2157583
-  if [ "$(lsb_release -sc)" = resolute ] && [ "$MANILA_BACKEND" = cephfs-nfs ]; then
+  if [ "$(lsb_release -sc)" = resolute ] && [ "$MANILA_BACKEND" = cephfs-nfs ] && [ "$MANILA_CEPHFS_NFS_MODE" = standalone ]; then
     cephfs_version=$(dpkg-query -W -f='${Version}' libcephfs2)
     # Include only the confirmed affected revisions, not older unverified builds.
     if dpkg --compare-versions "$cephfs_version" ge 20.2.0-0ubuntu2 && \

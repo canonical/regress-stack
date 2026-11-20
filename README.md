@@ -60,8 +60,22 @@ Regress Stack currently supports the following OpenStack modules:
 - **Watcher**: `watcher-api`, `watcher-decision-engine`, `watcher-applier`
 
 Manila defaults to LVM with kernel NFS. Set `MANILA_BACKEND=cephfs-nfs` for
-the `packages`, `setup`, and `test` commands to use CephFS with standalone
-NFS-Ganesha in a test VM.
+the `packages`, `setup`, and `test` commands to use CephFS over NFS in a test VM.
+`MANILA_CEPHFS_NFS_MODE=cluster` is the default: Manila uses
+`NFSClusterProtocolHelper` and Ceph Manager manages the exports. Ceph Manager
+and the NFS service run in upstream Ceph containers matching the installed
+Ceph major release. MON, MDS and OSD services retain the Ubuntu/PPA packages. The Manager
+container avoids the packaged cephadm subinterpreter issue
+([LP #2150762](https://bugs.launchpad.net/ubuntu/+source/ceph/+bug/2150762)).
+Set `MANILA_CEPHFS_NFS_MODE=standalone` to use `NFSProtocolHelper` with the
+Ubuntu/PPA Ganesha and libcephfs packages instead. Upstream has deprecated the
+standalone helper, but it remains useful for package regression tests.
+Cluster mode requires Manila Zed or newer; Yoga packages in Jammy require
+`MANILA_CEPHFS_NFS_MODE=standalone`. CI selects that explicitly for Jammy and
+uses cluster mode on newer releases, with an additional standalone job.
+Keep both environment variables consistent across `packages`, `setup`, and
+`test`. Select the mode before installing packages in a fresh test VM. Cluster
+setup errors fail without falling back to standalone mode.
 
 The following modules are available on [Sunbeam](https://github.com/canonical/snap-openstack) but are not currently supported by Regress Stack:
 

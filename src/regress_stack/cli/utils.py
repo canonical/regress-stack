@@ -27,8 +27,9 @@ def collect_logs():
                 if not log_path.exists():
                     continue
                 if log_path.is_dir():
-                    for log_file in log_path.iterdir():
-                        _output_log_file(log_file)
+                    for log_file in sorted(log_path.rglob("*")):
+                        if log_file.is_file():
+                            _output_log_file(log_file)
                 else:
                     _output_log_file(log_path)
     utils.print_ascii_banner("Collecting journal logs")

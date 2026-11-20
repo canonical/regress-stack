@@ -73,3 +73,121 @@ def test_legacy_api_uses_systemd(tmp_path, monkeypatch):
     manila._start_api()
 
     restart.assert_called_once_with("manila-api")
+
+
+@pytest.mark.parametrize("mode", ["cluster", "standalone"])
+def test_cephfs_mode_selects_export_manager(tmp_path, monkeypatch, mode):
+    """Select the requested helper without preparing the other Ganesha backend."""
+    monkeypatch.setattr(manila, "CEPHFS_NFS_MODE", mode)
+    monkeypatch.setattr(manila, "_check_cluster_support", Mock())
+    monkeypatch.setattr(manila.pathlib, "Path", lambda _: tmp_path / "manila.keyring")
+    monkeypatch.setattr(manila.shutil, "chown", Mock())
+    monkeypatch.setattr(manila.ceph, "ensure_osd", Mock())
+    monkeypatch.setattr(manila.ceph, "ensure_filesystem", Mock())
+    cluster = Mock()
+    standalone = Mock(return_value={"ganesha_rados_store_enable": "True"})
+    monkeypatch.setattr(manila.ceph, "ensure_nfs_cluster", cluster)
+    monkeypatch.setattr(manila, "_configure_standalone_ganesha", standalone)
+    monkeypatch.setattr(manila.core_utils, "has_service", lambda _: False)
+    (tmp_path / "manila.keyring").touch()
+    monkeypatch.setattr(manila.core_utils, "run", Mock())
+
+    settings = manila._configure_cephfs_nfs()
+
+    assert settings["cephfs_protocol_helper_type"] == "NFS"
+    if mode == "cluster":
+        cluster.assert_called_once_with(manila.FILESYSTEM)
+        standalone.assert_not_called()
+        assert settings["cephfs_nfs_cluster_id"] == manila.FILESYSTEM
+        assert "ganesha_rados_store_enable" not in settings
+    else:
+        standalone.assert_called_once_with()
+        cluster.assert_not_called()
+        assert "cephfs_nfs_cluster_id" not in settings
+
+
+def test_invalid_cephfs_mode_fails_before_setup(monkeypatch):
+    """Reject misspelled modes rather than silently using standalone Ganesha."""
+    monkeypatch.setattr(manila, "BACKEND", "cephfs-nfs")
+    monkeypatch.setattr(manila, "CEPHFS_NFS", True)
+    monkeypatch.setattr(manila, "CEPHFS_NFS_MODE", "typo")
+    configure = Mock()
+    monkeypatch.setattr(manila, "_configure_cephfs_nfs", configure)
+
+    with pytest.raises(ValueError, match="MANILA_CEPHFS_NFS_MODE"):
+        manila.setup()
+
+    configure.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "backend,mode,expected,excluded",
+    [
+        ("lvm", "cluster", "nfs-kernel-server", "cephadm"),
+        ("cephfs-nfs", "cluster", "cephadm", "nfs-ganesha"),
+        ("cephfs-nfs", "standalone", "nfs-ganesha-ceph", "cephadm"),
+    ],
+)
+def test_backend_environment_selects_packages(backend, mode, expected, excluded):
+    """Each fresh CLI process resolves runtime packages for its selected NFS mode."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import json; from regress_stack.modules import manila; "
+            "print(json.dumps(manila.PACKAGES))",
+        ],
+        env={**os.environ, "MANILA_BACKEND": backend, "MANILA_CEPHFS_NFS_MODE": mode},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    packages = json.loads(result.stdout)
+    assert expected in packages
+    assert excluded not in packages
+
+
+@pytest.mark.parametrize("supports_cluster", [False, True])
+def test_cluster_support_checked_before_provisioning(
+    tmp_path, monkeypatch, supports_cluster
+):
+    """Yoga cannot select a helper it does not contain; newer packages are accepted."""
+    package = tmp_path / "__init__.py"
+    driver = tmp_path / "share/drivers/cephfs/driver.py"
+    driver.parent.mkdir(parents=True)
+    driver.write_text(
+        "class NFSClusterProtocolHelper(Base):" if supports_cluster else ""
+    )
+    monkeypatch.setattr(
+        manila.importlib.util, "find_spec", lambda _: Mock(origin=str(package))
+    )
+
+    if supports_cluster:
+        manila._check_cluster_support()
+    else:
+        with pytest.raises(RuntimeError, match="MANILA_CEPHFS_NFS_MODE=standalone"):
+            manila._check_cluster_support()
+
+
+def test_standalone_mode_removes_cluster_setting(tmp_path, monkeypatch):
+    """An empty cluster ID still selects the cluster helper, so delete the option."""
+    monkeypatch.setattr(manila, "GANESHA_CONF", tmp_path / "ganesha.conf")
+    monkeypatch.setattr(manila, "GANESHA_EXPORTS", tmp_path / "exports")
+    monkeypatch.setattr(manila.ceph, "ensure_pool", Mock())
+    run = Mock(return_value=manila.GANESHA_INDEX)
+    monkeypatch.setattr(manila.core_utils, "run", run)
+    monkeypatch.setattr(manila.core_utils, "my_ip", lambda: "192.0.2.10")
+    monkeypatch.setattr(manila.core_utils, "restart_service", Mock())
+    monkeypatch.setattr(manila.core_utils, "enable_service", Mock())
+
+    settings = manila._configure_standalone_ganesha()
+
+    assert "cephfs_nfs_cluster_id" not in settings
+    run.assert_any_call(
+        "crudini", ["--del", manila.CONF, manila.SHARE_TYPE, "cephfs_nfs_cluster_id"]
+    )

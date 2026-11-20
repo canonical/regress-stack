@@ -1,6 +1,7 @@
 # Copyright 2026 - Canonical Ltd
 # SPDX-License-Identifier: GPL-3.0-only
 
+import importlib.util
 import os
 import pathlib
 import shutil
@@ -11,6 +12,7 @@ from regress_stack.modules import utils as module_utils
 
 BACKEND = os.environ.get("MANILA_BACKEND") or "lvm"
 CEPHFS_NFS = BACKEND == "cephfs-nfs"
+CEPHFS_NFS_MODE = os.environ.get("MANILA_CEPHFS_NFS_MODE") or "cluster"
 DEPENDENCIES = {keystone, mysql, rabbitmq}
 if CEPHFS_NFS:
     DEPENDENCIES.add(ceph)
@@ -26,13 +28,15 @@ if CEPHFS_NFS:
     PACKAGES.extend(
         [
             "ceph-mds",
-            "nfs-ganesha",
-            "nfs-ganesha-ceph",
             "nfs-common",
             "python3-ceph-argparse",
             "python3-rados",
         ]
     )
+    if CEPHFS_NFS_MODE == "cluster":
+        PACKAGES.extend(["cephadm", "podman", "openssh-server"])
+    else:
+        PACKAGES.extend(["nfs-ganesha", "nfs-ganesha-ceph"])
 else:
     PACKAGES.extend(["lvm2", "nfs-kernel-server"])
 
@@ -95,12 +99,63 @@ def _ensure_volume_group() -> None:
     core_utils.run("vgchange", ["-ay", VOLUME_GROUP])
 
 
+def _check_cluster_support() -> None:
+    """Reject old Manila packages without silently changing the selected helper."""
+    package = importlib.util.find_spec("manila")
+    if package is None or package.origin is None:
+        raise RuntimeError("Install the Manila service packages before setup")
+    driver = pathlib.Path(package.origin).parent / "share/drivers/cephfs/driver.py"
+    if "class NFSClusterProtocolHelper(" not in driver.read_text():
+        raise RuntimeError(
+            "Installed Manila has no NFSClusterProtocolHelper; "
+            "use MANILA_CEPHFS_NFS_MODE=standalone (required for Yoga/Jammy)"
+        )
+
+
 def _configure_cephfs_nfs() -> dict[str, str]:
+    if CEPHFS_NFS_MODE == "cluster":
+        _check_cluster_support()
     # Add a fourth OSD because parallel Tempest tests can reserve more than
     # the default 6 GiB. OSD_COUNT is the next index after the base OSDs.
     ceph.ensure_osd(i=ceph.OSD_COUNT, size_gb=8)
     ceph.ensure_filesystem(FILESYSTEM)
     core_utils.run("ceph", ["mgr", "module", "enable", "volumes"])
+    settings = {
+        "share_driver": "manila.share.drivers.cephfs.driver.CephFSDriver",
+        "cephfs_conf_path": ceph.CONF,
+        "cephfs_auth_id": SERVICE,
+        "cephfs_cluster_name": ceph.CLUSTER,
+        "cephfs_filesystem_name": FILESYSTEM,
+        "cephfs_protocol_helper_type": "NFS",
+    }
+    keyring = pathlib.Path(f"/etc/ceph/{ceph.CLUSTER}.client.manila.keyring")
+    caps = ["mon", "allow r", "mgr", "allow rw"]
+    if CEPHFS_NFS_MODE == "standalone":
+        caps.extend(["osd", f"allow rw pool={GANESHA_POOL}"])
+    core_utils.run(
+        "ceph", ["auth", "get-or-create", "client.manila", "-o", str(keyring)]
+    )
+    core_utils.run("ceph", ["auth", "caps", "client.manila", *caps])
+    shutil.chown(keyring, user=SERVICE)
+    keyring.chmod(0o600)
+    if core_utils.has_service("nfs-server"):
+        core_utils.run("systemctl", ["disable", "--now", "nfs-server"])
+
+    if CEPHFS_NFS_MODE == "cluster":
+        if core_utils.has_service("nfs-ganesha"):
+            core_utils.run("systemctl", ["disable", "--now", "nfs-ganesha"])
+        ceph.ensure_nfs_cluster(FILESYSTEM)
+        return {**settings, "cephfs_nfs_cluster_id": FILESYSTEM}
+
+    return {**settings, **_configure_standalone_ganesha()}
+
+
+def _configure_standalone_ganesha() -> dict[str, str]:
+    # Retain NFSProtocolHelper for distro-package regression tests. Upstream
+    # deprecated this helper; cluster mode uses NFSClusterProtocolHelper.
+    # The driver selects standalone only when the cluster ID is None, not
+    # an empty string. Remove the option rather than writing a blank value.
+    core_utils.run("crudini", ["--del", CONF, SHARE_TYPE, "cephfs_nfs_cluster_id"])
     ceph.ensure_pool(GANESHA_POOL)
     core_utils.run(
         "ceph", ["osd", "pool", "application", "enable", GANESHA_POOL, "nfs"]
@@ -108,44 +163,16 @@ def _configure_cephfs_nfs() -> dict[str, str]:
     objects = core_utils.run("rados", ["-p", GANESHA_POOL, "ls"]).splitlines()
     if GANESHA_INDEX not in objects:
         core_utils.run("rados", ["-p", GANESHA_POOL, "put", GANESHA_INDEX, "/dev/null"])
-    keyring = pathlib.Path(f"/etc/ceph/{ceph.CLUSTER}.client.manila.keyring")
-    core_utils.run(
-        "ceph",
-        [
-            "auth",
-            "get-or-create",
-            "client.manila",
-            "-o",
-            str(keyring),
-            "mon",
-            "allow r",
-            "mgr",
-            "allow rw",
-            "osd",
-            f"allow rw pool={GANESHA_POOL}",
-        ],
-    )
-    shutil.chown(keyring, user=SERVICE)
-    keyring.chmod(0o600)
-
     GANESHA_EXPORTS.mkdir(parents=True, exist_ok=True)
     GANESHA_CONF.write_text(
         "NFS_CORE_PARAM { Protocols = 4; Enable_NLM = false; Enable_RQUOTA = false; }\n"
         f'RADOS_URLS {{ ceph_conf = "{ceph.CONF}"; userid = "{SERVICE}"; }}\n'
         f'%url "rados://{GANESHA_POOL}/{GANESHA_INDEX}"\n'
     )
-    if core_utils.has_service("nfs-server"):
-        core_utils.run("systemctl", ["disable", "--now", "nfs-server"])
     core_utils.restart_service("nfs-ganesha")
     core_utils.enable_service("nfs-ganesha")
 
     return {
-        "share_driver": "manila.share.drivers.cephfs.driver.CephFSDriver",
-        "cephfs_conf_path": ceph.CONF,
-        "cephfs_auth_id": SERVICE,
-        "cephfs_cluster_name": ceph.CLUSTER,
-        "cephfs_filesystem_name": FILESYSTEM,
-        "cephfs_protocol_helper_type": "NFS",
         "cephfs_ganesha_server_is_remote": "False",
         "cephfs_ganesha_server_ip": core_utils.my_ip(),
         "ganesha_config_path": str(GANESHA_CONF),
@@ -170,6 +197,11 @@ def setup():
     if BACKEND not in {"lvm", "cephfs-nfs"}:
         raise ValueError(
             f"Unsupported MANILA_BACKEND {BACKEND!r}; use lvm or cephfs-nfs"
+        )
+    if CEPHFS_NFS and CEPHFS_NFS_MODE not in {"cluster", "standalone"}:
+        raise ValueError(
+            f"Unsupported MANILA_CEPHFS_NFS_MODE {CEPHFS_NFS_MODE!r}; "
+            "use cluster or standalone"
         )
     backend_settings = _configure_cephfs_nfs() if CEPHFS_NFS else _configure_lvm()
     db_user, db_pass = mysql.ensure_service(SERVICE)
